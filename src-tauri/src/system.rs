@@ -7,51 +7,65 @@ use tauri::AppHandle;
 
 // ---------- 单实例 ----------
 
-/// Linux 抽象命名空间 socket,不落盘
-#[cfg(target_os = "linux")]
-const SOCK_ADDR: &str = "\0kylinpaste.instance.sock";
-
-#[cfg(not(target_os = "linux"))]
+/// socket 路径:优先 XDG_RUNTIME_DIR(per-user、0700、登出自动清理),
+/// 回退到用户缓存目录。均为单用户目录,无需 uid 后缀。
 fn sock_path() -> std::path::PathBuf {
-    std::env::temp_dir().join("kylinpaste-instance.sock")
-}
-
-/// 尝试成为唯一实例。true = 本进程是首实例;false = 已有实例(已请求其显示窗口)。
-pub fn acquire_single_instance(app: AppHandle) -> bool {
-    #[cfg(target_os = "linux")]
-    let bind = || UnixListener::bind(SOCK_ADDR);
-    #[cfg(not(target_os = "linux"))]
-    let bind = || {
-        let p = sock_path();
-        let _ = std::fs::remove_file(&p);
-        UnixListener::bind(p)
-    };
-
-    match bind() {
-        Ok(listener) => {
-            // 首实例:监听后续实例的唤起请求
-            std::thread::spawn(move || {
-                for stream in listener.incoming() {
-                    if let Ok(mut s) = stream {
-                        let _ = s.write_all(b"show");
-                        crate::toggle_main_window(&app);
-                    }
-                }
-            });
-            true
-        }
-        Err(_) => {
-            // 已有实例:通知它显示主窗口
-            #[cfg(target_os = "linux")]
-            let connect = || UnixStream::connect(SOCK_ADDR);
-            #[cfg(not(target_os = "linux"))]
-            let connect = || UnixStream::connect(sock_path());
-            if let Ok(mut s) = connect() {
-                let _ = s.write_all(b"show");
-            }
-            false
+    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        let p = std::path::PathBuf::from(dir).join("kylinpaste.sock");
+        if p.is_absolute() {
+            return p;
         }
     }
+    dirs::cache_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join("kylinpaste-instance.sock")
+}
+
+/// 尝试成为唯一实例。
+/// 返回 true = 本进程继续运行(首实例或单实例检测降级);
+/// 返回 false = 确认已有活实例(已请求其显示窗口),本进程应退出。
+///
+/// 注意:任何绑定异常都不得让应用退出——单实例只是辅助功能。
+pub fn acquire_single_instance(app: AppHandle) -> bool {
+    let path = sock_path();
+
+    let listener = match UnixListener::bind(&path) {
+        Ok(l) => l,
+        Err(first_err) => {
+            // 绑定失败:先探活,区分"真有实例"和"陈旧 socket 残留"
+            match UnixStream::connect(&path) {
+                Ok(mut s) => {
+                    // 有活实例:请求其显示主窗口
+                    let _ = s.write_all(b"show");
+                    return false;
+                }
+                Err(_) => {
+                    // 无活实例:清理陈旧 socket 文件后重试
+                    let _ = std::fs::remove_file(&path);
+                    match UnixListener::bind(&path) {
+                        Ok(l) => l,
+                        Err(e) => {
+                            eprintln!(
+                                "[单实例] 绑定 {path:?} 失败({first_err} / {e}),单实例检测本次禁用"
+                            );
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    // 首实例:监听后续实例的唤起请求
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            if let Ok(mut s) = stream {
+                let _ = s.write_all(b"show");
+                crate::toggle_main_window(&app);
+            }
+        }
+    });
+    true
 }
 
 // ---------- 开机自启(XDG autostart) ----------

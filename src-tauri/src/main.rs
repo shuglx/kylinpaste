@@ -9,6 +9,9 @@ mod tray;
 use tauri::{GlobalShortcutManager, Manager, WindowEvent};
 
 fn main() {
+    // 目标机无 a11y DBus 服务时 GTK 会刷 dbind-WARNING,无害但吓人,提前关闭
+    std::env::set_var("NO_AT_BRIDGE", "1");
+
     tauri::Builder::default()
         .system_tray(tray::create())
         .on_system_tray_event(tray::handle_event)
@@ -22,19 +25,23 @@ fn main() {
             }
         })
         .setup(|app| {
-            // 单实例检查:已有实例则通知其显示窗口并退出自己
+            eprintln!("[启动] setup 开始");
+
+            // 单实例检查:确认已有活实例(而非陈旧 socket)才退出
             if !system::acquire_single_instance(app.handle().clone()) {
-                println!("KylinPaste 已在运行,已请求显示已有实例");
+                eprintln!("[启动] 检测到已有实例,已请求其显示窗口,本进程退出");
                 std::process::exit(0);
             }
 
-            // 全局快捷键 Ctrl+Alt+V 唤起/隐藏主窗口
+            // 全局快捷键 Ctrl+Alt+V 唤起/隐藏主窗口(失败不致命,降级继续)
             let handle = app.handle().clone();
-            app.global_shortcut_manager()
-                .register("Ctrl+Alt+V", move || {
-                    toggle_main_window(&handle);
-                })
-                .expect("注册全局快捷键 Ctrl+Alt+V 失败");
+            if let Err(e) = app.global_shortcut_manager().register("Ctrl+Alt+V", move || {
+                toggle_main_window(&handle);
+            }) {
+                eprintln!("[启动] 注册全局快捷键 Ctrl+Alt+V 失败(应用继续运行,可从托盘唤起): {e}");
+            } else {
+                eprintln!("[启动] 全局快捷键已注册");
+            }
 
             // 托盘菜单勾选状态与自启状态同步
             let _ = app
@@ -44,8 +51,14 @@ fn main() {
 
             // 启动剪贴板监听
             clipboard_service::start(app.handle().clone())?;
+            eprintln!("[启动] 剪贴板监听已启动");
 
-            println!("KylinPaste 启动完成");
+            // 防御性确保主窗口可见
+            if let Some(win) = app.get_window("main") {
+                let _ = win.show();
+            }
+
+            eprintln!("[启动] 完成");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

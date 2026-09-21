@@ -146,3 +146,5 @@ QC 是 Tauri 2 代码,移植时注意 API 差异:窗口/托盘/事件 API、插�
 - 范围谈判时的排除项:Emoji/符号/图库、贴图到屏幕、OCR、同步/传输、自动更新(内网)
 - mac 调试要点:粘贴模拟需辅助功能权限且归属到实际启动终端;`window.hide()` 在 mac 会让应用保持激活态且无键窗口,必须 `app.hide()`(代码已按平台 cfg 分支处理)
 - 首次搭建时 vite 需显式入口、tauri v1 配置字段位置、enigo 的 `Key::Unicode` 中文输入法查表风险(mac 已用 `Key::Other(9)` 规避)
+- **Rust std 不支持前导 NUL 的抽象 unix socket 路径**(bind 返回 InvalidInput "paths must not contain interior null bytes"),`SocketAddr::from_abstract_name` 也未进 stable——v0.1.0 因此在麒麟上"每次启动都判定已有实例直接退出"。v0.1.1 起改用文件 socket(XDG_RUNTIME_DIR 优先)+ 陈旧 socket 探活清理,且单实例任何异常都只降级、绝不退出应用
+- 目标机的 AT-SPI/dbind-WARNING(GtkKit 无 a11y 总线)无害,已在 main 里 `NO_AT_BRIDGE=1` 消除
