@@ -3,7 +3,11 @@ name: Build deb (arm64)
 on:
   push:
     branches: [main]
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 # 使用 GitHub 免费 arm64 runner(公共仓库可用)。
 # 若仓库为私有且无 arm64 runner 配额,可改用 ubuntu-latest + QEMU:
@@ -59,3 +63,13 @@ jobs:
         with:
           name: kylinpaste-arm64-deb
           path: dist-deb/*.deb
+
+      # 打 tag(v*)时创建 GitHub Release 并附上 deb
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-deb/*.deb
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
