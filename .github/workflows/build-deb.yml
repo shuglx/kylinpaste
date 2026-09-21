@@ -1,0 +1,61 @@
+name: Build deb (arm64)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 使用 GitHub 免费 arm64 runner(公共仓库可用)。
+# 若仓库为私有且无 arm64 runner 配额,可改用 ubuntu-latest + QEMU:
+#   docker run --platform linux/arm64 ...(构建耗时显著增加)
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Build frontend (vite)
+        run: npm run build
+
+      # cargo 缓存(容器内外共享目录)
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ci-cache/cargo/registry
+            .ci-cache/cargo/git
+            src-tauri/target
+          key: cargo-arm64-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: cargo-arm64-
+
+      - name: Build focal build image
+        run: docker build -t kylinpaste-build -f docker/Dockerfile.build docker/
+
+      - name: Build binary in focal container
+        run: |
+          mkdir -p .ci-cache/cargo/registry .ci-cache/cargo/git
+          docker run --rm \
+            -v "$PWD:/work" \
+            -v "$PWD/.ci-cache/cargo/registry:/root/.cargo/registry" \
+            -v "$PWD/.ci-cache/cargo/git:/root/.cargo/git" \
+            kylinpaste-build \
+            cargo build --release --manifest-path src-tauri/Cargo.toml
+
+      - name: Package deb
+        run: |
+          chmod +x scripts/package-deb.sh
+          ./scripts/package-deb.sh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kylinpaste-arm64-deb
+          path: dist-deb/*.deb
