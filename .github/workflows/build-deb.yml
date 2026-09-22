@@ -1,8 +1,9 @@
 name: Build (deb / dmg)
 
 on:
+  # 只有发 Release(推 v* 标签)才构建;推 main 的日常提交不触发,
+  # 需要出包时手动跑一次(Dispatch)或打标签
   push:
-    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 
