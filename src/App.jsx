@@ -658,7 +658,8 @@ export default function App() {
             title={t.groupFilterTitle}
             onClick={openGroupMenu}
           >
-            {groupFilter || t.group}
+            <IconTag />
+            <span className="chip-group-text">{groupFilter || t.group}</span>
             <IconChevron />
           </button>
         </div>

@@ -392,15 +392,29 @@ button:focus,
   color: #e0433f;
 }
 
-/* 分类条里的"分组"下拉:推到最右边(与下拉菜单同一条右边线) */
+/* 分类条里的"分组"下拉:推到最右边,宽度和下拉菜单一致(132px);
+   布局 = 标签图标 + 文本(可省略) + 箭头 */
 .chip-group {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
+  width: 132px;
   margin-left: auto;
+  padding-left: 10px;
+  padding-right: 8px;
 }
-
-/* 下拉箭头与文字之间留白(裸文本 + 元素) */
-.chip-group > svg { margin-left: 4px; }
+.chip-group > svg {
+  flex: 0 0 auto;
+  color: #9aa0a8;
+}
+.chip-group-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
 
 /* ---------------- 空态 / 报错 ---------------- */
 
