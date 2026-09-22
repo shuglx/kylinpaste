@@ -413,7 +413,7 @@ button:focus,
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  text-align: left;
+  text-align: center;
 }
 
 /* ---------------- 空态 / 报错 ---------------- */
@@ -498,16 +498,32 @@ button:focus,
 .menu-text {
   display: inline;
 }
-/* "不筛选"没有颜色点,但文字与其它项对齐 */
-.menu-item.center {
-  padding-left: 22px;
-}
 .menu-item:hover {
   background: var(--hover);
 }
 .menu-item.on {
   color: var(--accent);
   font-weight: 600;
+  /* 右侧给 × 留位,不与省略号文字重叠 */
+  padding-right: 24px;
+}
+/* 选中分组的 × 取消标记 */
+.menu-x {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  border-radius: 50%;
+  line-height: 15px;
+  text-align: center;
+  font-size: 14px;
+  color: var(--muted);
+}
+.menu-x:hover {
+  background: var(--hover);
+  color: var(--text);
 }
 .menu-empty {
   padding: 8px 10px;

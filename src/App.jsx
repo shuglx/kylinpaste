@@ -739,23 +739,33 @@ export default function App() {
           style={{ top: menuPos.top, left: menuPos.left }}
           onMouseDown={(e) => e.stopPropagation()}
         >
-          {/* "不筛选"没有颜色点,文字居中(与下面带彩点的分组行区分开) */}
-          <button
-            className={`menu-item center${groupFilter ? '' : ' on'}`}
-            onClick={() => pickGroup(null)}
-          >
-            <span className="menu-text">{t.groupNoFilter}</span>
-          </button>
-          {groups.map((g) => (
-            <button
-              key={g}
-              className={`menu-item${groupFilter === g ? ' on' : ''}`}
-              onClick={() => pickGroup(g)}
-            >
-              <i className="dot" style={dotStyle(colorOf(g))} />
-              <span className="menu-text">{g}</span>
-            </button>
-          ))}
+          {/* 当前选中的分组行带 × 标记;再点一下该行(或点 ×)即取消筛选 */}
+          {groups.map((g) => {
+            const active = groupFilter === g;
+            return (
+              <button
+                key={g}
+                className={`menu-item${active ? ' on' : ''}`}
+                title={active ? t.groupFilterClear : undefined}
+                onClick={() => pickGroup(active ? null : g)}
+              >
+                <i className="dot" style={dotStyle(colorOf(g))} />
+                <span className="menu-text">{g}</span>
+                {active && (
+                  <span
+                    className="menu-x"
+                    aria-label={t.groupFilterClear}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      pickGroup(null);
+                    }}
+                  >
+                    ×
+                  </span>
+                )}
+              </button>
+            );
+          })}
           {groups.length === 0 && <div className="menu-empty">{t.groupEmpty}</div>}
         </div>
       )}
