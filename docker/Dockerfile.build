@@ -6,8 +6,11 @@ FROM ubuntu:20.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update \
+# Acquire::Retries:CI 上 ports.ubuntu.com 偶发单连接失败(Connection failed)
+# 曾导致整个镜像构建报废;让 apt 对每个下载自动重试
+RUN apt-get update -o Acquire::Retries=5 \
  && apt-get install -y --no-install-recommends --allow-downgrades \
+      -o Acquire::Retries=5 \
       build-essential \
       curl \
       pkg-config \
