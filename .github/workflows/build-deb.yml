@@ -43,8 +43,18 @@ jobs:
           key: cargo-arm64-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: cargo-arm64-
 
+      # 构建镜像要拉 ubuntu:20.04 + apt 装包,Docker Hub 限流/apt 源抖动都可能导致
+      # 偶发失败(代码无关),这里重试三次
       - name: Build focal build image
-        run: docker build -t kylinpaste-build -f docker/Dockerfile.build docker/
+        run: |
+          for i in 1 2 3; do
+            echo "第 $i 次尝试构建镜像"
+            if docker build -t kylinpaste-build -f docker/Dockerfile.build docker/; then
+              exit 0
+            fi
+            [ "$i" = 3 ] && exit 1
+            sleep 30
+          done
 
       - name: Build binary in focal container
         run: |
