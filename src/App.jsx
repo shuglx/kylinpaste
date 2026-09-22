@@ -23,7 +23,10 @@ import {
 /** 旧版把收藏记在 localStorage 的 key(新版本挪到记录里,启动时迁移一次) */
 const FAV_KEY = 'kp-favorites';
 const PIN_KEY = 'kp-pinned';
-const LINK_RE = /(https?:\/\/|www\.)\S+/i;
+// 链接判定:仅当文本**开头**就是协议(或 www.)才归类为链接;
+// 大段文本里碰巧含有链接的算文字。注意 ^ 锚定,不能用"包含"判断
+const LINK_RE = /^(https?:\/\/|www\.|ftps?:\/\/|mailto:)/i;
+const isLink = (text) => LINK_RE.test((text || '').trim());
 /** 快捷粘贴的修饰键:mac 上是 ⌘,其它平台是 Ctrl */
 const IS_MAC = /mac/i.test(navigator.platform || navigator.userAgent);
 
@@ -57,14 +60,14 @@ const dotStyle = (color) => ({
 const kindTone = (rec) => {
   if (rec.kind === 'image') return 'image';
   if (rec.kind === 'files') return 'files';
-  if (LINK_RE.test(rec.text || '')) return 'link';
+  if (isLink(rec.text)) return 'link';
   return rec.kind === 'html' ? 'html' : 'text';
 };
 
 const kindIcon = (rec) => {
   if (rec.kind === 'image') return <IconImage />;
   if (rec.kind === 'files') return <IconFolder />;
-  if (LINK_RE.test(rec.text || '')) return <IconLink />;
+  if (isLink(rec.text)) return <IconLink />;
   return <IconDoc />;
 };
 
@@ -79,7 +82,7 @@ function rowText(rec, t) {
       ? t.subtitleImage
       : rec.kind === 'files'
         ? t.subtitleFiles
-        : LINK_RE.test(rec.text || '')
+        : isLink(rec.text)
           ? t.subtitleLink
           : t.subtitleText;
   const sub = rec.source_app ? `${label} · ${rec.source_app}` : label;
@@ -313,10 +316,10 @@ export default function App() {
     return items.filter((rec) => {
       // "文字"不含链接:链接记录只在"链接"分类里出现,两边不重叠
       if (filter === 'text' && (rec.kind !== 'text' && rec.kind !== 'html')) return false;
-      if (filter === 'text' && LINK_RE.test(rec.text || '')) return false;
+      if (filter === 'text' && isLink(rec.text)) return false;
       if (filter === 'image' && rec.kind !== 'image') return false;
       if (filter === 'files' && rec.kind !== 'files') return false;
-      if (filter === 'link' && !LINK_RE.test(rec.text || '')) return false;
+      if (filter === 'link' && !isLink(rec.text)) return false;
       if (filter === 'fav' && !rec.favorite) return false;
       if (groupFilter && rec.group !== groupFilter) return false;
       if (!q) return true;
