@@ -9,7 +9,10 @@ edition = "2021"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-tauri = { version = "1.8", features = ["system-tray", "global-shortcut"] }
+# window-start-dragging:无标题栏窗口靠 data-tauri-drag-region 拖动
+# protocol-asset:前端用 asset:// 协议加载本地图片缩略图(见 tauri.conf.json 的 assetScope)
+# 这两个能力在 v1 里都由 allowlist 的编译期开关控制,配置与 features 必须一致
+tauri = { version = "1.8", features = [ "macos-private-api", "system-tray", "global-shortcut", "window-start-dragging", "protocol-asset"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # 剪贴板监听/读写(Linux X11 / macOS)
@@ -18,9 +21,18 @@ clipboard-rs = "0.3.5"
 enigo = "0.6.1"
 once_cell = "1.18"
 sha2 = "0.10"
-image = { version = "0.25", default-features = false, features = ["png"] }
+# png 用于我们自己的落盘;jpeg/gif/bmp/webp/tiff 用于解码"被复制的图片文件"和剪贴板兜底格式
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp", "tiff"] }
 dirs = "5.0"
 parking_lot = "0.12"
+
+# X11 底层能力:全局热键抓键、焦点归还、XTEST 注入 Ctrl+V(见 src/x11.rs)
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["xtest"] }
+
+# NSWorkspace.frontmostApplication:读"复制时前台应用名"当来源(见 src/appinfo.rs)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
 
 [features]
 default = ["custom-protocol"]

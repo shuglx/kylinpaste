@@ -2,9 +2,16 @@ node_modules/
 dist/
 dist-deb/
 src-tauri/target/
+target/
 .ci-cache/
 .DS_Store
 # 参考项目(本地保留,不入库)
 ref/
 # 目标机环境信息(含内网机器名,不入库)
 targetosinfo.txt
+# 本地 X11 验证脚手架(容器里跑的探针程序,只在本机用)
+.x11test/
+.x11check/
+# 运行时产物 / 日志
+*.log
+generated-images/
