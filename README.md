@@ -1,6 +1,8 @@
 # KylinPaste
 
-![Header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=170&text=KylinPaste&fontSize=58&animation=fadeIn&desc=%E9%BA%92%E9%BA%9F%E6%93%8D%E4%BD%9C%E7%B3%BB%E7%BB%9F%E4%B8%8A%E5%A5%BD%E7%94%A8%E7%9A%84%E5%89%AA%E8%B4%B4%E6%9D%BF&descSize=20)
+![Header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=170&text=KylinPaste&fontSize=58&animation=fadeIn)
+
+> 麒麟操作系统上好用的剪贴板 —— 为信创办公场景而生
 
 [![Release](https://img.shields.io/github/v/release/shuglx/kylinpaste?style=flat-square)](https://github.com/shuglx/kylinpaste/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
@@ -20,6 +22,10 @@
 - 办公中最常用的"复制 → 找历史 → 再粘贴"这件事，恰恰是信创环境里体验缺口最大的。
 
 KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——以麒麟 V10 SP1 自带的 WebKitGTK 2.28 基线构建，UI 与交互按国产桌面（UKUI）的真实问题逐一适配，同时提供 macOS 版本方便开发期预览。
+
+开发所依据的目标环境（银河麒麟桌面操作系统 V10 SP1，版本号 2203）：
+
+![银河麒麟桌面操作系统 V10 SP1](docs/screenshots/kylin-os.png)
 
 ## 功能特性
 
