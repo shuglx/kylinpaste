@@ -169,11 +169,27 @@ function mainKeyOf(event) {
 }
 
 /** 快捷键录入:点一下进入"请按键"状态,按下的组合直接生效 */
-function HotkeyRecorder({ value, onCommit, t }) {
+function HotkeyRecorder({ value, onCommit, onRecordingChange, t }) {
   const [recording, setRecording] = useState(false);
   const [error, setError] = useState(null);
   const commitRef = useRef(onCommit);
   commitRef.current = onCommit;
+  const notifyRef = useRef(onRecordingChange);
+  notifyRef.current = onRecordingChange;
+
+  // 录入期间暂停全局热键:被动抓键(X11 XGrabKey)会把按键事件投递给抓键方,
+  // webview 根本收不到 —— 不暂停的话,当前正在生效的那个组合永远录不进去。
+  // 组件卸载(关设置页)时兜底恢复。
+  useEffect(() => {
+    invoke('cmd_set_hotkey_recording', { recording }).catch(() => {});
+    notifyRef.current?.();
+    return () => {
+      if (recording) {
+        invoke('cmd_set_hotkey_recording', { recording: false }).catch(() => {});
+        notifyRef.current?.();
+      }
+    };
+  }, [recording]);
 
   useEffect(() => {
     if (!recording) return undefined;
@@ -222,11 +238,22 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
   const [appInfo, setAppInfo] = useState(null);
   const [autostart, setAutostart] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [hotkeyStatus, setHotkeyStatus] = useState(null);
+  const [logPath, setLogPath] = useState(null);
 
   useEffect(() => {
     invoke('cmd_get_app_info').then(setAppInfo).catch(() => {});
     invoke('cmd_get_autostart').then(setAutostart).catch(() => {});
+    invoke('cmd_get_log_path').then(setLogPath).catch(() => {});
   }, []);
+
+  /** 全局热键的注册状态:没绑上/被占用时在这里提示,而不是让用户对着没反应的快捷键干瞪眼 */
+  const refreshHotkeyStatus = () => {
+    invoke('cmd_get_hotkey_status').then(setHotkeyStatus).catch(() => {});
+  };
+  useEffect(() => {
+    refreshHotkeyStatus();
+  }, [settings.hotkey]);
 
   const flash = (msg) => {
     setNotice(msg);
@@ -247,8 +274,15 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
         .then(() => {
           if (successMessage) flash(successMessage);
         })
-        .catch((e) => fail(String(e)));
+        .catch((e) => fail(String(e)))
+        .then(refreshHotkeyStatus); // 成功失败都刷新:失败时前端已回滚,状态要跟着回去
     }
+  };
+
+  const copyLogPath = () => {
+    invoke('cmd_copy_log_path')
+      .then(() => flash(t.pathCopied))
+      .catch((e) => fail(String(e)));
   };
 
   const toggleAutostart = (next) => {
@@ -313,9 +347,19 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
                   <HotkeyRecorder
                     value={settings.hotkey}
                     t={t}
+                    onRecordingChange={refreshHotkeyStatus}
                     onCommit={(accel) => commit({ hotkey: accel }, t.hotkeySaved)}
                   />
                 </Row>
+                {hotkeyStatus && !hotkeyStatus.ok && (
+                  <div className="hotkey-warn">
+                    <div>{t.hotkeyStatusFailed(hotkeyStatus.message)}</div>
+                    <div className="hotkey-warn-tip">{t.hotkeyStatusTip}</div>
+                  </div>
+                )}
+                {hotkeyStatus && hotkeyStatus.ok && hotkeyStatus.wayland && (
+                  <div className="hotkey-warn soft">{t.hotkeyWayland}</div>
+                )}
               </div>
 
               <div className="group-title">{t.sectionStorage}</div>
@@ -369,6 +413,15 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
                 >
                   <span className="link-value">
                     github.com/shuglx/kylinpaste
+                    <IconExternalLink />
+                  </span>
+                </Row>
+                <Row label={`${t.logFile}（${t.copyPath}）`} onClick={copyLogPath}>
+                  <span
+                    className="link-value log-path"
+                    title={logPath || ''}
+                  >
+                    {logPath ? 'kylinpaste.log' : '—'}
                     <IconExternalLink />
                   </span>
                 </Row>

@@ -3,9 +3,11 @@
 use std::time::Duration;
 
 use clipboard_rs::{Clipboard, ClipboardContent};
+#[allow(unused_imports)] // Manager 只在非 macOS 分支里用(get_window)
 use tauri::{AppHandle, Manager};
 
 use crate::clipboard_service;
+use crate::klog;
 use crate::state::{self, ClipboardRecord};
 
 /// 粘贴是一条"写剪贴板 → 隐藏窗口 → 归还焦点 → 注入 Ctrl+V"的长链路,耗时上百毫秒。
@@ -20,13 +22,13 @@ pub fn cmd_paste_item(app: AppHandle, id: u64) -> Result<(), String> {
     let result = paste_record(&app, &rec);
     // 粘贴失败时窗口已经隐藏,前端的错误横幅是看不到的,必须打到 stderr 上
     if let Err(e) = &result {
-        eprintln!("[粘贴] 失败: {e}");
+        klog!("[粘贴] 命令失败: {e}");
     }
     result
 }
 
 pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
-    println!(
+    klog!(
         "[粘贴] 开始: 类型={} 哈希前8={}",
         rec.kind,
         &rec.hash[..rec.hash.len().min(8)]
@@ -35,14 +37,27 @@ pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String
     // 粘贴会写回剪贴板,先抑制监听器,避免把自己的写入当成一条新记录
     state::suppress_monitor_for(4000);
 
+    let outcome = paste_steps(app, rec);
+
+    // 失败时窗口已经藏起来了,而"唤起窗口"的全局热键本身也可能没绑上
+    // (麒麟上就有这种情况)。所以失败一律把窗口收回来,避免用户以为程序崩了/找不回界面。
+    if let Err(e) = &outcome {
+        klog!("[粘贴] 失败: {e} —— 把主窗口重新显示出来,避免界面丢失");
+        crate::show_main(app);
+    }
+    outcome
+}
+
+/// 粘贴主链路:写剪贴板 → 隐藏窗口 → 归还焦点 → 注入快捷键
+fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
     // 1. 先写剪贴板:此时窗口还在,出错能立刻反馈给前端
     write_clipboard(app, rec)?;
-    println!("[粘贴] 剪贴板已写入");
+    klog!("[粘贴] 剪贴板已写入");
 
     // 2. 隐藏窗口,把焦点让出去
     crate::hide_main(app);
     let hidden = wait_until_hidden(app, Duration::from_millis(800));
-    println!("[粘贴] 主窗口已隐藏: {hidden}");
+    klog!("[粘贴] 主窗口已隐藏: {hidden}");
 
     // 3. 确保焦点落回"唤起剪贴板之前的那个窗口"
     restore_focus();
@@ -53,7 +68,7 @@ pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String
     // 检测到这种情况就显式 deactivate 一次,把激活态交给下一个应用。
     #[cfg(target_os = "macos")]
     if crate::appinfo::active_app_name().is_none() {
-        println!("[粘贴] 隐藏后前台仍是自己,显式让出激活态");
+        klog!("[粘贴] 隐藏后前台仍是自己,显式让出激活态");
         // AppKit 只允许在主线程调用,必须 dispatch 回主线程(命令跑在线程池里)
         let handle = app.clone();
         let _ = handle.run_on_main_thread(|| crate::appinfo::deactivate_self());
@@ -62,21 +77,22 @@ pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String
 
     // 注入前把"现在前台是谁"打出来:如果这里是我们自己(None)或空,说明焦点没让出去,
     // 注入的快捷键会打空 —— 排查"只能粘一次"这类问题全靠这一行
-    let win = app.get_window("main");
-    println!(
-        "[粘贴] 注入前: 前台应用={:?} 主窗口可见={:?} 有焦点={:?}",
+    klog!(
+        "[粘贴] 注入前: 前台应用={:?} 窗口可见(镜像)={}",
         crate::appinfo::active_app_name(),
-        win.as_ref().and_then(|w| w.is_visible().ok()),
-        win.as_ref().and_then(|w| w.is_focused().ok()),
+        crate::window_visible(),
     );
 
     // 4. 注入粘贴快捷键(macOS 是 ⌘V,其余平台 Ctrl+V)
     simulate_paste()?;
-    println!("[粘贴] 粘贴快捷键已发送");
+    klog!("[粘贴] 粘贴快捷键已发送");
     Ok(())
 }
 
-/// 等待窗口真正隐藏(窗口请求是投递到主循环异步处理的)
+/// 等待窗口真正隐藏(窗口请求是投递到主循环异步处理的)。
+///
+/// 查询窗口可见性必须回到主线程做:Linux 上 `is_visible()` 直接读 GTK,
+/// 工作线程里调用会崩(麒麟上的"点条目粘贴直接崩溃"就是这个)。
 fn wait_until_hidden(app: &AppHandle, timeout: Duration) -> bool {
     // macOS 走的是 app.hide()(NSApp hide:),它同步生效、立刻把激活态交还给上一个应用,
     // 但窗口自身的 is_visible 标志不一定跟着翻转,轮询它只会白等超时,所以这里直接放行
@@ -88,12 +104,9 @@ fn wait_until_hidden(app: &AppHandle, timeout: Duration) -> bool {
 
     #[cfg(not(target_os = "macos"))]
     {
-        let Some(win) = app.get_window("main") else {
-            return true;
-        };
         let deadline = std::time::Instant::now() + timeout;
         loop {
-            if !win.is_visible().unwrap_or(false) {
+            if is_visible_via_main(app) == Some(false) {
                 return true;
             }
             if std::time::Instant::now() >= deadline {
@@ -102,6 +115,19 @@ fn wait_until_hidden(app: &AppHandle, timeout: Duration) -> bool {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+}
+
+/// 请主线程读一次窗口可见性并把结果传回来(拿不到就返回 None,由调用方决定怎么兜底)
+#[cfg(not(target_os = "macos"))]
+fn is_visible_via_main(app: &AppHandle) -> Option<bool> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let value = handle.get_window("main").and_then(|w| w.is_visible().ok());
+        let _ = tx.send(value);
+    })
+    .ok()?;
+    rx.recv_timeout(Duration::from_millis(300)).ok().flatten()
 }
 
 /// 归还焦点。
@@ -120,9 +146,9 @@ fn restore_focus() {
         match crate::x11::target_window() {
             Some(win) => {
                 let ok = crate::x11::activate_window(win);
-                println!("[粘贴] 归还焦点到 0x{win:x},结果={ok}");
+                klog!("[粘贴] 归还焦点到 0x{win:x},结果={ok}");
             }
-            None => println!("[粘贴] 没有记录过目标窗口,依赖窗口管理器归还焦点"),
+            None => klog!("[粘贴] 没有记录过目标窗口,依赖窗口管理器归还焦点"),
         }
     }
 }

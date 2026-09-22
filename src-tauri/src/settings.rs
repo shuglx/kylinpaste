@@ -3,6 +3,7 @@
 //! 设置项很少,不做增量更新接口——界面把整份设置发回来,后端负责校验、应用副作用
 //! (改热键、改保留条数)再落盘;热键注册失败时不落盘,界面拿到 Err 后回显原值。
 
+use crate::klog;
 use std::path::PathBuf;
 
 use once_cell::sync::Lazy;
@@ -123,8 +124,10 @@ pub fn cmd_set_settings(app: AppHandle, settings: Settings) -> Result<Settings, 
     let next = sanitize(settings);
     let old = get();
 
-    // 热键先注册:失败就直接返回错误,不落盘(界面会把旧的热键显示回去)
-    if next.hotkey != old.hotkey {
+    // 热键先注册:失败就直接返回错误,不落盘(界面会把旧的热键显示回去)。
+    // 注意:值没变也要重试注册 —— 启动时可能因为被别的程序占用而没绑上,
+    // 用户在设置里原样再"设一次"(比如把它重新录一遍)就是一次合理的重试机会。
+    if next.hotkey != old.hotkey || !crate::hotkey::status().ok {
         crate::hotkey::apply(&app, &next.hotkey)?;
     }
     let max_changed = next.max_items != old.max_items;
@@ -135,9 +138,12 @@ pub fn cmd_set_settings(app: AppHandle, settings: Settings) -> Result<Settings, 
         state::set_max_items(next.max_items);
     }
 
-    println!(
+    klog!(
         "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={}",
-        next.hotkey, next.max_items, next.language, next.quick_paste
+        next.hotkey,
+        next.max_items,
+        next.language,
+        next.quick_paste
     );
     Ok(next)
 }

@@ -227,6 +227,13 @@ export default function App() {
       .catch((e) => console.error('获取图片目录失败：', e));
   }, []);
 
+  // 把 WebView 信息写进日志:麒麟上要靠它确认 WebKitGTK 版本(判断 CSS 支持范围)
+  useEffect(() => {
+    invoke('cmd_log', {
+      message: `UA=${navigator.userAgent} | platform=${navigator.platform} | lang=${navigator.language}`,
+    }).catch(() => {});
+  }, []);
+
   // 唤起后直接能打字搜索
   useEffect(() => {
     if (view === 'list') inputRef.current?.focus();
@@ -490,14 +497,36 @@ export default function App() {
 
   // 按住 Ctrl(⌘)时亮出数字角标,松开就收起;同时用它决定快捷键是否生效
   useEffect(() => {
-    const sync = (e) => setModDown(IS_MAC ? e.metaKey : e.ctrlKey);
+    const MODIFIER_KEY = IS_MAC ? 'Meta' : 'Control';
+    // 修饰键"自己"的事件:老版 WebKitGTK(麒麟)在这类事件里给出的
+    // e.ctrlKey/e.metaKey 可能是错的(按下时是 false),不能只信事件标志
+    const isSelf = (e) =>
+      e.key === MODIFIER_KEY ||
+      e.code === `${MODIFIER_KEY}Left` ||
+      e.code === `${MODIFIER_KEY}Right` ||
+      e.keyCode === (IS_MAC ? 91 : 17) ||
+      (IS_MAC && e.keyCode === 93);
+    const onDown = (e) => {
+      if (isSelf(e)) {
+        setModDown(true);
+        return;
+      }
+      setModDown(IS_MAC ? e.metaKey : e.ctrlKey);
+    };
+    const onUp = (e) => {
+      if (isSelf(e)) {
+        setModDown(false);
+        return;
+      }
+      setModDown(IS_MAC ? e.metaKey : e.ctrlKey);
+    };
     const reset = () => setModDown(false);
-    window.addEventListener('keydown', sync);
-    window.addEventListener('keyup', sync);
+    window.addEventListener('keydown', onDown);
+    window.addEventListener('keyup', onUp);
     window.addEventListener('blur', reset);
     return () => {
-      window.removeEventListener('keydown', sync);
-      window.removeEventListener('keyup', sync);
+      window.removeEventListener('keydown', onDown);
+      window.removeEventListener('keyup', onUp);
       window.removeEventListener('blur', reset);
     };
   }, []);

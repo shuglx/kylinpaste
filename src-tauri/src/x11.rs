@@ -325,11 +325,26 @@ fn modifier_combos(bits: u16) -> Vec<u16> {
     combos
 }
 
-/// 待生效的加速键:监听线程轮询到变化就重新抓键(用来支持运行时改绑)
-static HOTKEY_REQ: Lazy<Mutex<Option<(u64, String)>>> = Lazy::new(|| Mutex::new(None));
+/// 交给监听线程的请求(监听线程独占 X 连接,抓/放键都必须由它做)
+enum HotkeyReq {
+    /// 改绑(seq 用于配对回复)
+    Set { seq: u64, accel: String },
+    /// 暂停:放开当前抓住的组合。
+    ///
+    /// 设置界面录快捷键时必须先放开——被动抓键(owner_events=false)会把该组合的
+    /// 主键事件投递给抓键方(根窗口),webview 根本收不到,于是"录不进当前热键"。
+    Pause,
+    /// 恢复:按当前加速键重新抓
+    Resume,
+}
+
+/// 待处理的请求:监听线程轮询到就执行
+static HOTKEY_REQ: Lazy<Mutex<Option<HotkeyReq>>> = Lazy::new(|| Mutex::new(None));
 /// 重新抓键的结果回传通道:`set_hotkey` 同步等结果,好把失败原因报给设置界面
 static HOTKEY_REPLY: Lazy<Mutex<Option<Sender<XResult<()>>>>> = Lazy::new(|| Mutex::new(None));
 static HOTKEY_SEQ: AtomicU64 = AtomicU64::new(0);
+/// 当前生效的加速键(暂停后恢复时要用)
+static HOTKEY_ACCEL: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
 
 /// 主键名 → X11 keysym(小写字母、数字的 keysym 就等于 ASCII 码)
 fn keysym_of(token: &str) -> Option<u32> {
@@ -403,6 +418,13 @@ struct Grab {
     lock_combos: Vec<u16>,
 }
 
+/// 放开一个热键(连同锁定键组合各一份)
+fn release(conn: &RustConnection, root: Window, grab: &Grab) {
+    for extra in &grab.lock_combos {
+        let _ = conn.ungrab_key(grab.keycode, root, ModMask::from(grab.mods | extra));
+    }
+}
+
 /// 按加速键抓键:**先抓新的,成功后再放开旧的**,改绑失败时旧热键仍然可用。
 ///
 /// 锁定键(CapsLock/NumLock/ScrollLock)开着的组合要各注册一份,所以一个热键
@@ -446,7 +468,7 @@ fn grab_hotkey(
         ));
     }
     if !failures.is_empty() {
-        eprintln!(
+        crate::klog!(
             "[热键] 部分锁定键组合注册失败(不影响主流程): {}",
             failures.join("; ")
         );
@@ -455,12 +477,10 @@ fn grab_hotkey(
     // 键位与修饰键完全相同时不能 ungrab——那会把刚抓到的这份也放掉
     if let Some(old) = previous {
         if old.keycode != keycode || old.mods != mods {
-            for extra in &old.lock_combos {
-                let _ = conn.ungrab_key(old.keycode, root, ModMask::from(old.mods | extra));
-            }
+            release(conn, root, old);
         }
     }
-    println!(
+    crate::klog!(
         "[热键] 已抓取 {accel} (keycode={keycode}, 组合 {grabbed}/{})",
         lock_combos.len()
     );
@@ -473,13 +493,32 @@ fn grab_hotkey(
 
 /// 运行时改绑全局热键:交给监听线程去做,并同步等它的结果(界面需要知道成没成)。
 pub fn set_hotkey(accel: &str) -> XResult<()> {
+    *HOTKEY_ACCEL.lock() = accel.to_string();
     let seq = HOTKEY_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    dispatch(HotkeyReq::Set {
+        seq,
+        accel: accel.to_string(),
+    })
+}
+
+/// 暂停热键(放开已抓的组合):设置界面录快捷键前调用
+pub fn pause_hotkey() -> XResult<()> {
+    dispatch(HotkeyReq::Pause)
+}
+
+/// 恢复热键(按当前加速键重新抓):录完/取消后调用
+pub fn resume_hotkey() -> XResult<()> {
+    dispatch(HotkeyReq::Resume)
+}
+
+/// 把请求交给监听线程并同步等结果
+fn dispatch(req: HotkeyReq) -> XResult<()> {
     let (tx, rx) = channel();
     *HOTKEY_REPLY.lock() = Some(tx);
-    *HOTKEY_REQ.lock() = Some((seq, accel.to_string()));
+    *HOTKEY_REQ.lock() = Some(req);
     match rx.recv_timeout(Duration::from_secs(3)) {
         Ok(result) => result,
-        Err(_) => Err("热键监听线程没有响应,改绑未生效".to_string()),
+        Err(_) => Err("热键监听线程没有响应(可能已退出),本次操作未生效".to_string()),
     }
 }
 
@@ -504,6 +543,7 @@ where
     .check()
     .map_err(|e| format!("监听根窗口按键失败: {e}"))?;
 
+    *HOTKEY_ACCEL.lock() = accel.to_string();
     let mut current = Some(grab_hotkey(&conn, root, &keymap, accel, None)?);
 
     std::thread::spawn(move || {
@@ -517,21 +557,52 @@ where
         let mut held: HashMap<u8, u32> = HashMap::new();
         let mut repeat_pair: Option<(u8, u32)> = None;
         loop {
-            // 设置界面改了热键 → 重新抓键,并把结果回传给 set_hotkey
-            if let Some((seq, accel)) = HOTKEY_REQ.lock().clone() {
-                let result = match grab_hotkey(&conn, root, &keymap, &accel, current.as_ref()) {
-                    Ok(grab) => {
-                        current = Some(grab);
+            // 设置界面的请求:改绑 / 暂停 / 恢复。
+            // 抓键与放键都必须在本线程做:被动抓键归属发起它的那条 X 连接。
+            if let Some(req) = HOTKEY_REQ.lock().take() {
+                let result = match req {
+                    HotkeyReq::Set { seq, accel } => {
+                        crate::klog!("[热键] 收到改绑请求 #{seq}: {accel}");
+                        match grab_hotkey(&conn, root, &keymap, &accel, current.as_ref()) {
+                            Ok(grab) => {
+                                *HOTKEY_ACCEL.lock() = accel;
+                                current = Some(grab);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                crate::klog!("[热键] 改绑失败: {e}");
+                                Err(e)
+                            }
+                        }
+                    }
+                    HotkeyReq::Pause => {
+                        if let Some(grab) = current.take() {
+                            release(&conn, root, &grab);
+                            crate::klog!(
+                                "[热键] 已暂停:放开 keycode={} 的组合,供设置界面录入",
+                                grab.keycode
+                            );
+                        }
                         Ok(())
                     }
-                    Err(e) => Err(e),
-                };
-                {
-                    let mut req = HOTKEY_REQ.lock();
-                    if matches!(req.as_ref(), Some((s, _)) if *s == seq) {
-                        *req = None;
+                    HotkeyReq::Resume => {
+                        let accel = HOTKEY_ACCEL.lock().clone();
+                        if accel.is_empty() {
+                            Ok(())
+                        } else {
+                            match grab_hotkey(&conn, root, &keymap, &accel, None) {
+                                Ok(grab) => {
+                                    current = Some(grab);
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    crate::klog!("[热键] 恢复失败: {e}");
+                                    Err(e)
+                                }
+                            }
+                        }
                     }
-                }
+                };
                 if let Some(tx) = HOTKEY_REPLY.lock().take() {
                     let _ = tx.send(result);
                 }
@@ -545,7 +616,7 @@ where
                     continue;
                 }
                 Err(e) => {
-                    eprintln!("[热键] X11 事件读取失败,热键监听退出: {e}");
+                    crate::klog!("[热键] X11 事件读取失败,热键监听退出: {e}");
                     break;
                 }
             };

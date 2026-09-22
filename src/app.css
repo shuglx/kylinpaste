@@ -21,10 +21,14 @@
 
 html,
 body,
+html,
+body,
 #root {
   height: 100%;
 }
 
+/* 窗口是透明的,圆角与外框由 .app 自己画 */
+html,
 /* 窗口是透明的,圆角与外框由 .app 自己画 */
 html,
 body {
@@ -64,17 +68,19 @@ button {
 .search-row {
   display: flex;
   align-items: center;
-  gap: 7px;
 }
+
+.search-row > * + * { margin-left: 7px; }
 
 .search {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 12px;
   padding-left: 2px;
 }
+
+.search > svg { margin-right: 12px; }
 .search > svg {
   color: #b9bdc6;
   flex: 0 0 auto;
@@ -103,9 +109,13 @@ button {
   border-radius: 50%;
   background: transparent;
   color: #b0b5bd;
-  display: grid;
-  place-items: center;
+  padding: 0;
+  line-height: 36px;
+  text-align: center;
+  font-size: 0;
 }
+
+.icon-btn > svg { vertical-align: middle; }
 .icon-btn:hover {
   background: var(--hover);
   color: var(--muted);
@@ -118,12 +128,13 @@ button {
 
 .chips {
   display: flex;
-  gap: 8px;
   /* 右边不留白:最后一个"分组"按钮靠到与顶栏图标同一条右边线上 */
   padding: 10px 0 12px 2px;
   overflow-x: auto;
   scrollbar-width: none;
 }
+
+.chips > * + * { margin-left: 8px; }
 .chips::-webkit-scrollbar {
   display: none;
 }
@@ -163,9 +174,10 @@ button {
 .item {
   display: flex;
   align-items: center;
-  gap: 12px;
   padding: 11px 16px;
 }
+
+.item > * + * { margin-left: 12px; }
 .item:hover {
   background: var(--hover);
 }
@@ -176,12 +188,16 @@ button {
   width: 38px;
   height: 38px;
   border-radius: 9px;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: #f1f2f4;
   color: #5b6169;
 }
 
+/* 图片类记录:铺满这一格,按正方形裁切(图片本体比例不变)。
+   裁切放在内层 .thumb-clip 上——数字角标是 .thumb 的子元素且带负偏移,
+   直接把 overflow:hidden 放在 .thumb 上会把角标切掉一块 */
 /* 图片类记录:铺满这一格,按正方形裁切(图片本体比例不变)。
    裁切放在内层 .thumb-clip 上——数字角标是 .thumb 的子元素且带负偏移,
    直接把 overflow:hidden 放在 .thumb 上会把角标切掉一块 */
@@ -190,7 +206,10 @@ button {
 }
 .thumb-clip {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   border-radius: 9px;
   overflow: hidden;
 }
@@ -200,6 +219,9 @@ button {
   object-fit: cover;
   display: block;
 }
+/* 文字/富文本/图片统一用绿色调(之前 文字=蓝、富文本=紫,同一类却两个颜色) */
+.thumb.t-text,
+.thumb.t-html,
 /* 文字/富文本/图片统一用绿色调(之前 文字=蓝、富文本=紫,同一类却两个颜色) */
 .thumb.t-text,
 .thumb.t-html,
@@ -250,11 +272,12 @@ button {
 .sub {
   display: flex;
   align-items: center;
-  gap: 8px;
   margin-top: 3px;
   font-size: 12.5px;
   color: var(--muted);
 }
+
+.sub > * + * { margin-left: 8px; }
 .sub-text {
   min-width: 0;
   white-space: nowrap;
@@ -267,7 +290,6 @@ button {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   max-width: 130px;
   padding: 1px 8px 1px 6px;
   border: 1px solid #e6e7eb;
@@ -280,17 +302,23 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
 /* 分组颜色圆点:记录上的标签 / 筛选菜单 / 分组编辑面板共用,颜色按分组名算出来 */
 .dot {
+  /* 菜单项与分组标签里圆点走行内布局,必须 inline-block 才有宽高 */
+  display: inline-block;
+  vertical-align: middle;
   flex: 0 0 auto;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: #d7dae0;
 }
+/* 圆点与文字之间留白(容器里是"元素 + 裸文本",用兄弟 margin 选不到文本) */
 .group-pill .dot {
   width: 7px;
   height: 7px;
+  margin-right: 5px;
 }
 
 .time {
@@ -307,9 +335,13 @@ button {
   border-radius: 50%;
   background: transparent;
   color: #c8ccd3;
-  display: grid;
-  place-items: center;
+  padding: 0;
+  line-height: 26px;
+  text-align: center;
+  font-size: 0;
 }
+
+.star > svg { vertical-align: middle; }
 .star:hover {
   background: var(--hover);
   color: #9aa0a8;
@@ -323,8 +355,9 @@ button {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: 2px;
 }
+
+/* 行尾操作:分组 / 收藏 / 删除(挨在一起,不撑开行宽) */ .row-actions > * + * { margin-left: 2px; }
 
 .row-btn {
   flex: 0 0 auto;
@@ -334,9 +367,13 @@ button {
   border-radius: 50%;
   background: transparent;
   color: #c8ccd3;
-  display: grid;
-  place-items: center;
+  padding: 0;
+  line-height: 26px;
+  text-align: center;
+  font-size: 0;
 }
+
+.row-btn > svg { vertical-align: middle; }
 .row-btn:hover {
   background: var(--hover);
   color: #9aa0a8;
@@ -352,9 +389,11 @@ button {
 .chip-group {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   margin-left: auto;
 }
+
+/* 下拉箭头与文字之间留白(裸文本 + 元素) */
+.chip-group > svg { margin-left: 4px; }
 
 /* ---------------- 空态 / 报错 ---------------- */
 
@@ -411,29 +450,36 @@ button {
   box-shadow: 0 10px 30px rgba(20, 22, 26, 0.14);
 }
 .menu-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
+  position: relative;
+  display: block;
   width: 100%;
   height: 26px;
-  padding: 0 8px;
+  /* 左边给颜色点留位;行高与高度一致,文字才在行内垂直居中 */
+  padding: 0 8px 0 22px;
   border: 0;
   border-radius: 8px;
   background: transparent;
   color: #2c2f34;
   font-size: 12.5px;
-  line-height: 1;
+  line-height: 26px;
   text-align: left;
-}
-.menu-text {
-  min-width: 0;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
-/* "不筛选"这类没有颜色点的项:文字居中 */
+/* 颜色点绝对定位并手动居中:老 WebKitGTK 上按钮里的 flex 居中不可靠 */
+.menu-item .dot {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  margin-top: -4px;
+}
+.menu-text {
+  display: inline;
+}
+/* "不筛选"没有颜色点,但文字与其它项对齐 */
 .menu-item.center {
-  justify-content: center;
+  padding-left: 22px;
 }
 .menu-item:hover {
   background: var(--hover);
@@ -478,13 +524,13 @@ button {
 .tag-known {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
   margin-top: 9px;
 }
+
+.tag-known > * { margin: 0 5px 5px 0; }
 .tag-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  /* 按钮上不用 flex:老 WebKitGTK 对按钮的 flex/grid 居中不可靠,行高更稳 */
+  display: inline-block;
   max-width: 100%;
   padding: 3px 9px;
   border: 1px solid #e6e7eb;
@@ -492,9 +538,15 @@ button {
   background: #fafafb;
   color: #5b6169;
   font-size: 12px;
+  line-height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tag-chip .dot {
+  margin-right: 5px;
+  vertical-align: middle;
 }
 .tag-chip:hover {
   background: var(--hover);
@@ -503,9 +555,10 @@ button {
 .tag-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 6px;
   margin-top: 10px;
 }
+
+.tag-actions > * + * { margin-left: 6px; }
 
 .btn {
   padding: 6px 14px;
@@ -536,10 +589,14 @@ button {
 
 .modal-mask {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 50;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   background: rgba(22, 24, 29, 0.28);
 }
@@ -564,9 +621,10 @@ button {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
   margin-top: 16px;
 }
+
+.modal-actions > * + * { margin-left: 8px; }
 
 /* ---------------- 设置界面(左页签 + 右内容卡片) ---------------- */
 
@@ -583,12 +641,12 @@ button {
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
+
+.side > * + * { margin-top: 4px; }
 .side-item {
   display: flex;
   align-items: center;
-  gap: 9px;
   padding: 8px 10px;
   border: 0;
   border-radius: 9px;
@@ -597,6 +655,8 @@ button {
   font-size: 13.5px;
   text-align: left;
 }
+
+.side-item > svg { margin-right: 9px; }
 .side-item svg {
   flex: 0 0 auto;
   color: #7d838c;
@@ -604,6 +664,7 @@ button {
 .side-item:hover {
   background: #eceef1;
 }
+.side-item.on,
 .side-item.on,
 .side-item.on svg {
   background: var(--accent);
@@ -622,9 +683,10 @@ button {
 .pane-head {
   display: flex;
   align-items: center;
-  gap: 2px;
   padding: 9px 12px 4px;
 }
+
+.pane-head > * + * { margin-left: 2px; }
 .pane-head h1 {
   font-size: 15px;
   font-weight: 600;
@@ -662,7 +724,6 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
   width: 100%;
   padding: 9px 14px;
   border: 0;
@@ -671,12 +732,15 @@ button {
   font-size: 13.5px;
   text-align: left;
 }
+
+.row > * + * { margin-left: 12px; }
 .row-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   min-width: 0;
 }
+
+.row-label > * + * { margin-left: 6px; }
 /* 说明按钮:点一下才展开说明文字(悬停不弹原生提示、光标也保持普通指针) */
 .hint-btn {
   display: inline-grid;
@@ -718,10 +782,11 @@ button.row:hover {
 .link-value {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
   color: var(--accent);
   font-size: 12.5px;
 }
+
+.link-value > svg { margin-left: 6px; }
 
 /* 开关 */
 .switch {
@@ -756,7 +821,6 @@ button.row:hover {
 .select {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
   padding: 4px 8px;
   border: 0;
   border-radius: 7px;
@@ -764,6 +828,8 @@ button.row:hover {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* 下拉选择 */ .select > * + * { margin-left: 5px; }
 .select:hover {
   background: #eceef1;
   color: var(--text);
@@ -777,8 +843,9 @@ button.row:hover {
   display: inline-flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 3px;
 }
+
+/* 快捷键录入 */ .hotkey-cell > * + * { margin-top: 3px; }
 .hotkey {
   padding: 4px 10px;
   border: 1px solid #e2e4e8;
@@ -799,14 +866,42 @@ button.row:hover {
   color: #e0433f;
   font-size: 11.5px;
 }
+/* 热键没绑上 / Wayland 会话提示 */
+.hotkey-warn {
+  margin: 8px 14px 12px;
+  padding: 8px 11px;
+  border: 1px solid #ffe0dd;
+  border-radius: 9px;
+  background: #fff5f4;
+  color: #c0292b;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.hotkey-warn.soft {
+  border-color: #ffedd0;
+  background: #fffaf2;
+  color: #a06a12;
+}
+.hotkey-warn-tip {
+  margin-top: 4px;
+  color: #8b8f98;
+}
+/* 关于页里的日志文件名(完整路径放在 title 里,点行复制路径) */
+.log-path {
+  max-width: 300px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* 关于页 */
 .about-card {
   display: flex;
   align-items: center;
-  gap: 12px;
   padding: 14px;
 }
+
+/* 关于页 */ .about-card > * + * { margin-left: 12px; }
 .about-logo {
   flex: 0 0 auto;
   width: 46px;

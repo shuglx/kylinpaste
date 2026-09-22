@@ -77,6 +77,15 @@ const zh = {
   hotkeyNeedModifier: '至少要带一个修饰键（如 Ctrl / Alt）',
   hotkeySaved: '快捷键已更新',
   hotkeyFailed: (e) => `改绑失败：${e}`,
+  hotkeyStatusFailed: (e) => `全局快捷键没生效：${e}`,
+  hotkeyStatusTip:
+    '可以点上面的按钮重新录一次；若还是不行，多半是这个组合被输入法或桌面占用了（中文输入法常占 Ctrl+Shift）——换个组合试试。',
+  hotkeyWayland:
+    '当前是 Wayland 会话：X11 全局热键对原生 Wayland 窗口不生效，建议改用 X11（Xorg）会话登录。',
+  logFile: '日志文件',
+  logFileTip: '排查问题时把这个文件拷给开发者',
+  copyPath: '复制路径',
+  pathCopied: '路径已复制',
   maxItems: '最大条目数',
   maxItemsHint:
     '仅限制未收藏、未分组的临时记录数，收藏与分组的记录独立存储、不会被统一清理。\n所有剪贴板历史数据仅在本机存储，不含任何网络传输功能。',
@@ -159,6 +168,15 @@ const en = {
   hotkeyNeedModifier: 'Include at least one modifier (such as Ctrl / Alt)',
   hotkeySaved: 'Shortcut updated',
   hotkeyFailed: (e) => `Rebind failed: ${e}`,
+  hotkeyStatusFailed: (e) => `Global shortcut is not active: ${e}`,
+  hotkeyStatusTip:
+    'Click the button above to record again. If it still fails, the combination is probably taken by the input method or desktop (Ctrl+Shift is commonly used) — try another one.',
+  hotkeyWayland:
+    'This is a Wayland session: X11 global shortcuts do not fire for native Wayland windows. Log in with an X11 (Xorg) session instead.',
+  logFile: 'Log file',
+  logFileTip: 'Send this file when reporting a problem',
+  copyPath: 'Copy path',
+  pathCopied: 'Path copied',
   maxItems: 'Max records',
   maxItemsHint:
     'Limits temporary records that are neither starred nor grouped; starred and grouped records are stored separately and are never cleared in bulk.\nAll clipboard history stays on this machine — no network transfer of any kind.',
