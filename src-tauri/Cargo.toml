@@ -34,6 +34,8 @@ x11rb = { version = "0.13", features = ["xtest"] }
 # NSWorkspace.frontmostApplication:读"复制时前台应用名"当来源(见 src/appinfo.rs)
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+# macOS 开机自启:加入"登录项"(系统设置→通用→登录项),Linux 侧仍用手写 XDG autostart
+auto-launch = "0.5"
 
 [features]
 default = ["custom-protocol"]

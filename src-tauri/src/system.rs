@@ -68,12 +68,56 @@ pub fn acquire_single_instance(app: AppHandle) -> bool {
     true
 }
 
-// ---------- 开机自启(XDG autostart) ----------
+// ---------- 开机自启 ----------
 
+// Linux:手写 XDG autostart(写 ~/.config/autostart/*.desktop)。
+// macOS:XDG 的 desktop 文件在 mac 上没有任何作用,必须走"登录项"
+// (系统设置 → 通用 → 登录项),用 auto-launch crate 的 LSSharedFileList 实现,
+// 不需要额外系统权限。
+
+#[cfg(target_os = "macos")]
+pub fn set_autostart(enable: bool) -> Result<bool, String> {
+    use auto_launch::AutoLaunchBuilder;
+
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let launch = AutoLaunchBuilder::new()
+        .set_app_name("KylinPaste")
+        .set_app_path(exe.to_string_lossy().as_ref())
+        .build()
+        .map_err(|e| e.to_string())?;
+    if enable {
+        launch.enable().map_err(|e| e.to_string())?;
+    } else {
+        launch.disable().map_err(|e| e.to_string())?;
+    }
+    let enabled = launch.is_enabled().map_err(|e| e.to_string())?;
+    crate::klog!("[自启] mac 登录项: {} -> {}", if enable { "开启" } else { "关闭" }, enabled);
+    Ok(enabled)
+}
+
+#[cfg(target_os = "macos")]
+pub fn is_autostart() -> bool {
+    use auto_launch::AutoLaunchBuilder;
+
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(_) => return false,
+    };
+    AutoLaunchBuilder::new()
+        .set_app_name("KylinPaste")
+        .set_app_path(exe.to_string_lossy().as_ref())
+        .build()
+        .ok()
+        .and_then(|l| l.is_enabled().ok())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
 fn autostart_desktop_path() -> Option<std::path::PathBuf> {
     dirs::config_dir().map(|d| d.join("autostart").join("kylinpaste.desktop"))
 }
 
+#[cfg(not(target_os = "macos"))]
 pub fn set_autostart(enable: bool) -> Result<bool, String> {
     let path = autostart_desktop_path().ok_or("无法定位用户配置目录")?;
     if enable {
@@ -105,15 +149,24 @@ pub fn set_autostart(enable: bool) -> Result<bool, String> {
     Ok(is_autostart())
 }
 
-/// 自启动文件的完整路径(界面反馈给用户,方便核对)
-pub fn autostart_path_str() -> Option<String> {
-    autostart_desktop_path().map(|p| p.to_string_lossy().into_owned())
-}
-
+#[cfg(not(target_os = "macos"))]
 pub fn is_autostart() -> bool {
     autostart_desktop_path()
         .map(|p| p.exists())
         .unwrap_or(false)
+}
+
+/// 自启动载体路径(Linux 是 .desktop 文件,mac 是登录项没有文件 → None),
+/// 界面反馈给用户方便核对
+pub fn autostart_path_str() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        None // 登录项不是文件,界面改提示"系统设置 → 通用 → 登录项"
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        autostart_desktop_path().map(|p| p.to_string_lossy().into_owned())
+    }
 }
 
 #[tauri::command]

@@ -273,15 +273,17 @@ export default function Settings({
     refreshHotkeyStatus();
   }, [settings.hotkey]);
 
-  const flash = (msg) => {
+  const flash = (msg, duration = 4200) => {
     setNotice(msg);
-    window.setTimeout(() => setNotice(null), 2200);
+    window.clearTimeout(flash.timer);
+    flash.timer = window.setTimeout(() => setNotice(null), duration);
   };
 
   const fail = (e) => {
     console.error(e);
     setNotice(String(e));
-    window.setTimeout(() => setNotice(null), 3200);
+    window.clearTimeout(fail.timer);
+    fail.timer = window.setTimeout(() => setNotice(null), 5200);
   };
 
   /** 保存设置:失败(比如热键被占用)时上层会回滚,这里把错误弹给用户 */
@@ -310,8 +312,8 @@ export default function Settings({
         setAutostart(!!actual);
         // 给个明确反馈:开关本身没有可见变化,之前"开了像没开"就是这个原因
         invoke('cmd_get_autostart_path')
-          .then((p) => flash(next ? t.autostartOn(p || '') : t.autostartOff))
-          .catch(() => flash(next ? t.autostartOn('') : t.autostartOff));
+          .then((p) => flash(next ? (p ? t.autostartOn(p) : t.autostartOnSystem) : t.autostartOff))
+          .catch(() => flash(next ? t.autostartOnSystem : t.autostartOff));
       })
       .catch((e) => {
         setAutostart(!next);
