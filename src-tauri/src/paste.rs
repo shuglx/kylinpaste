@@ -234,9 +234,24 @@ fn write_clipboard(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String>
                 None => ctx.set_image(img).map_err(|e| format!("写入图片失败: {e}")),
             }
         }
-        "html" => ctx
-            .set_html(rec.html.clone().unwrap_or_default())
-            .map_err(|e| format!("写入富文本失败: {e}")),
+        // 富文本:html 和纯文本**一起**写回,目标应用各取所需。
+        // 只写 html(set_html)的话,纯文本目标(终端、记事本类、部分 Linux 程序)
+        // 在剪贴板上取不到 text/plain,表现就是"粘不出来",像是不支持富文本。
+        "html" => match rec
+            .text
+            .as_deref()
+            .filter(|plain| !plain.trim().is_empty())
+        {
+            Some(plain) => ctx
+                .set(vec![
+                    ClipboardContent::Html(rec.html.clone().unwrap_or_default()),
+                    ClipboardContent::Text(plain.to_string()),
+                ])
+                .map_err(|e| format!("写入富文本失败: {e}")),
+            None => ctx
+                .set_html(rec.html.clone().unwrap_or_default())
+                .map_err(|e| format!("写入富文本失败: {e}")),
+        },
         _ => ctx
             .set_text(rec.text.clone().unwrap_or_default())
             .map_err(|e| format!("写入文本失败: {e}")),
