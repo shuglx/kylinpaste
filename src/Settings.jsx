@@ -410,7 +410,7 @@ export default function Settings({
             </>
           ) : tab === 'storage' ? (
             <>
-              <div className="group-title">{t.sectionStorage}</div>
+              <div className="group-title">{t.sectionCapacity}</div>
               <div className="card">
                 <Row label={t.maxItems} hint={t.maxItemsHint}>
                   <Select
