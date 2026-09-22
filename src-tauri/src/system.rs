@@ -85,6 +85,7 @@ pub fn set_autostart(enable: bool) -> Result<bool, String> {
             "[Desktop Entry]\n\
              Type=Application\n\
              Name=KylinPaste\n\
+             Comment=Clipboard manager\n\
              Exec={}\n\
              Icon=kylinpaste\n\
              Terminal=false\n\
@@ -95,7 +96,18 @@ pub fn set_autostart(enable: bool) -> Result<bool, String> {
     } else {
         let _ = std::fs::remove_file(&path);
     }
+    crate::klog!(
+        "[自启] {} -> {}({})",
+        if enable { "开启" } else { "关闭" },
+        path.display(),
+        if is_autostart() { "文件在位" } else { "文件已移除" }
+    );
     Ok(is_autostart())
+}
+
+/// 自启动文件的完整路径(界面反馈给用户,方便核对)
+pub fn autostart_path_str() -> Option<String> {
+    autostart_desktop_path().map(|p| p.to_string_lossy().into_owned())
 }
 
 pub fn is_autostart() -> bool {

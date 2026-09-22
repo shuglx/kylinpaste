@@ -130,6 +130,7 @@ fn main() {
             settings::cmd_set_settings,
             system::cmd_get_autostart,
             system::cmd_set_autostart,
+            cmd_get_autostart_path,
             cmd_get_app_info,
             cmd_set_always_on_top,
             cmd_hide_main,
@@ -301,6 +302,12 @@ fn open_with_system(path: &str) -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 自启动 .desktop 文件的路径(设置界面提示用户"写到哪里了")
+#[tauri::command]
+fn cmd_get_autostart_path() -> Option<String> {
+    system::autostart_path_str()
 }
 
 /// 全局热键的注册状态(设置界面据此提示"没绑上/被占用/是 Wayland")

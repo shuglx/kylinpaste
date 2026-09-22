@@ -306,7 +306,13 @@ export default function Settings({
   const toggleAutostart = (next) => {
     setAutostart(next); // 先动界面,失败再回滚
     invoke('cmd_set_autostart', { enabled: next })
-      .then((actual) => setAutostart(!!actual))
+      .then((actual) => {
+        setAutostart(!!actual);
+        // 给个明确反馈:开关本身没有可见变化,之前"开了像没开"就是这个原因
+        invoke('cmd_get_autostart_path')
+          .then((p) => flash(next ? t.autostartOn(p || '') : t.autostartOff))
+          .catch(() => flash(next ? t.autostartOn('') : t.autostartOff));
+      })
       .catch((e) => {
         setAutostart(!next);
         fail(t.autostartFailed(e));
