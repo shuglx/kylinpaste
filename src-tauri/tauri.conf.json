@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "KylinPaste",
-    "version": "0.2.5"
+    "version": "0.2.6"
   },
   "tauri": {
     "macOSPrivateApi": true,
