@@ -96,7 +96,7 @@ fn wait_until_hidden(app: &AppHandle, timeout: Duration) -> bool {
             if !win.is_visible().unwrap_or(false) {
                 return true;
             }
-            if Instant::now() >= deadline {
+            if std::time::Instant::now() >= deadline {
                 return false;
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -113,8 +113,8 @@ fn wait_until_hidden(app: &AppHandle, timeout: Duration) -> bool {
 fn restore_focus() {
     #[cfg(target_os = "linux")]
     {
-        let deadline = Instant::now() + Duration::from_millis(200);
-        while Instant::now() < deadline && !crate::x11::focus_left_app() {
+        let deadline = std::time::Instant::now() + Duration::from_millis(200);
+        while std::time::Instant::now() < deadline && !crate::x11::focus_left_app() {
             std::thread::sleep(Duration::from_millis(25));
         }
         match crate::x11::target_window() {

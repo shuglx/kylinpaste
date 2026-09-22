@@ -54,7 +54,7 @@ Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: ${ARCH}
-Depends: libwebkit2gtk-4.0-37, libgtk-3-0, libappindicator3-1, libxkbcommon0
+Depends: libwebkit2gtk-4.0-37, libgtk-3-0, libxkbcommon0
 Maintainer: ryan <ryan@localhost>
 Description: KylinPaste clipboard history manager for Kylin V10 (arm64)
  剪贴板历史管理工具:全类型记录、搜索、快捷粘贴、收藏分组。
