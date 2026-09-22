@@ -137,6 +137,8 @@ fn main() {
             cmd_log,
             cmd_get_log_path,
             cmd_copy_log_path,
+            cmd_get_storage_files,
+            cmd_open_path,
             cmd_get_hotkey_status,
             cmd_set_hotkey_recording,
         ])
@@ -235,6 +237,70 @@ fn cmd_copy_log_path() -> Result<String, String> {
         ctx.set_text(text.clone()).map_err(|e| format!("写入剪贴板失败: {e}"))
     })?;
     Ok(text)
+}
+
+/// "存储"页展示的文件
+#[derive(serde::Serialize)]
+struct StorageFile {
+    name: String,
+    path: String,
+}
+
+/// 存储页展示的文件列表(记录文件 + 设置文件)
+#[tauri::command]
+fn cmd_get_storage_files() -> Vec<StorageFile> {
+    let mut files = Vec::new();
+    let mut push = |p: Option<std::path::PathBuf>| {
+        if let Some(p) = p {
+            files.push(StorageFile {
+                name: p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                path: p.to_string_lossy().into_owned(),
+            });
+        }
+    };
+    push(state::history_path());
+    push(settings::file_path());
+    files
+}
+
+/// 用系统默认程序打开"存储"页里的文件。
+///
+/// 只放行 `cmd_get_storage_files` 返回的那几个路径——不给前端一个任意路径启动器。
+#[tauri::command]
+fn cmd_open_path(path: String) -> Result<(), String> {
+    let allowed = cmd_get_storage_files().iter().any(|f| f.path == path);
+    if !allowed {
+        return Err("只允许打开应用自己的存储文件".into());
+    }
+    let result = open_with_system(&path);
+    match &result {
+        Ok(()) => klog!("[存储] 已请求系统打开 {path}"),
+        Err(e) => klog!("[存储] 打开 {path} 失败: {e}"),
+    }
+    result
+}
+
+fn open_with_system(path: &str) -> Result<(), String> {
+    // spawn 而不是 wait:打开器是 GUI 程序,不能阻塞命令线程
+    #[cfg(target_os = "macos")]
+    std::process::Command::new("open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "linux")]
+    std::process::Command::new("xdg-open")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer")
+        .arg(path)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// 全局热键的注册状态(设置界面据此提示"没绑上/被占用/是 Wayland")

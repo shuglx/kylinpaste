@@ -59,6 +59,11 @@ pub fn get() -> Settings {
     SETTINGS.lock().clone()
 }
 
+/// 设置文件路径("存储"页展示用;启动前为 None)
+pub fn file_path() -> Option<PathBuf> {
+    DIR.lock().clone().map(|dir| dir.join(FILE))
+}
+
 /// 启动时载入:文件不存在/解析失败就用默认值,并立刻落一份,方便用户知道有这个文件
 pub fn start(app: &AppHandle) {
     let Some(dir) = app.path_resolver().app_data_dir() else {

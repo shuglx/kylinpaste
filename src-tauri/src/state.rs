@@ -120,7 +120,7 @@ pub fn start_persistence(app: &AppHandle) {
     });
 }
 
-fn history_path() -> Option<PathBuf> {
+pub fn history_path() -> Option<PathBuf> {
     DATA_DIR.lock().as_ref().map(|dir| dir.join(HISTORY_FILE))
 }
 

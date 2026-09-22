@@ -4,6 +4,7 @@ import { open as openUrl } from '@tauri-apps/api/shell';
 import {
   IconChevron,
   IconChevronLeft,
+  IconDoc,
   IconExternalLink,
   IconInfo,
   IconSliders,
@@ -233,19 +234,36 @@ function HotkeyRecorder({ value, onCommit, onRecordingChange, t }) {
   );
 }
 
-export default function Settings({ settings, onChange, onClose, t, onLanguageChange }) {
+export default function Settings({
+  settings,
+  onChange,
+  onClose,
+  t,
+  onLanguageChange,
+  counts,
+}) {
   const [tab, setTab] = useState('general');
   const [appInfo, setAppInfo] = useState(null);
   const [autostart, setAutostart] = useState(false);
   const [notice, setNotice] = useState(null);
   const [hotkeyStatus, setHotkeyStatus] = useState(null);
   const [logPath, setLogPath] = useState(null);
+  const [storageFiles, setStorageFiles] = useState([]);
 
   useEffect(() => {
     invoke('cmd_get_app_info').then(setAppInfo).catch(() => {});
     invoke('cmd_get_autostart').then(setAutostart).catch(() => {});
     invoke('cmd_get_log_path').then(setLogPath).catch(() => {});
+    invoke('cmd_get_storage_files').then(setStorageFiles).catch(() => {});
   }, []);
+
+  /** 打开"存储"页里的文件(后端只放行它自己报出来的那几个路径) */
+  const openStorageFile = (name) => {
+    const file = storageFiles.find((f) => f.name === name);
+    if (!file) return;
+    invoke('cmd_open_path', { path: file.path }).catch((e) => fail(t.openPathFailed(e)));
+  };
+  const fileNameOf = (name) => storageFiles.find((f) => f.name === name)?.name || '—';
 
   /** 全局热键的注册状态:没绑上/被占用时在这里提示,而不是让用户对着没反应的快捷键干瞪眼 */
   const refreshHotkeyStatus = () => {
@@ -308,6 +326,14 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
         </button>
         <button
           type="button"
+          className={`side-item${tab === 'storage' ? ' on' : ''}`}
+          onClick={() => setTab('storage')}
+        >
+          <IconDoc />
+          {t.tabStorage}
+        </button>
+        <button
+          type="button"
           className={`side-item${tab === 'about' ? ' on' : ''}`}
           onClick={() => setTab('about')}
         >
@@ -321,7 +347,9 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
           <button type="button" className="icon-btn" title={t.back} onClick={onClose}>
             <IconChevronLeft />
           </button>
-          <h1>{tab === 'general' ? t.tabGeneral : t.tabAbout}</h1>
+          <h1>
+            {tab === 'general' ? t.tabGeneral : tab === 'storage' ? t.tabStorage : t.tabAbout}
+          </h1>
         </header>
 
         <div className="pane-body">
@@ -362,18 +390,6 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
                 )}
               </div>
 
-              <div className="group-title">{t.sectionStorage}</div>
-              <div className="card">
-                <Row label={t.maxItems} hint={t.maxItemsHint}>
-                  <Select
-                    value={settings.max_items}
-                    options={KEEP_OPTIONS.map((n) => ({ value: n, label: String(n) }))}
-                    onChange={(v) => commit({ max_items: v })}
-                    width={110}
-                  />
-                </Row>
-              </div>
-
               <div className="group-title">{t.sectionI18n}</div>
               <div className="card">
                 <Row label={t.language}>
@@ -389,6 +405,52 @@ export default function Settings({ settings, onChange, onClose, t, onLanguageCha
                     }}
                     width={140}
                   />
+                </Row>
+              </div>
+            </>
+          ) : tab === 'storage' ? (
+            <>
+              <div className="group-title">{t.sectionStorage}</div>
+              <div className="card">
+                <Row label={t.maxItems} hint={t.maxItemsHint}>
+                  <Select
+                    value={settings.max_items}
+                    options={KEEP_OPTIONS.map((n) => ({ value: n, label: String(n) }))}
+                    onChange={(v) => commit({ max_items: v })}
+                    width={110}
+                  />
+                </Row>
+              </div>
+
+              <div className="group-title">{t.sectionStorageUsage}</div>
+              <div className="card">
+                <Row label={t.storageTransient}>
+                  <span className="storage-num">{t.storageCount(counts?.transient ?? 0)}</span>
+                </Row>
+                <Row label={t.storageGrouped}>
+                  <span className="storage-num">{t.storageCount(counts?.grouped ?? 0)}</span>
+                </Row>
+                <Row label={t.storageFavorite}>
+                  <span className="storage-num">{t.storageCount(counts?.favorite ?? 0)}</span>
+                </Row>
+              </div>
+
+              <div className="group-title">{t.sectionStorageFiles}</div>
+              <div className="card">
+                <Row label={t.storageRecordsFile} onClick={() => openStorageFile('history.json')}>
+                  <span className="link-value" title={t.storageRecordsTip}>
+                    {fileNameOf('history.json')}
+                    <IconExternalLink />
+                  </span>
+                </Row>
+                <Row
+                  label={t.storageSettingsFile}
+                  onClick={() => openStorageFile('settings.json')}
+                >
+                  <span className="link-value">
+                    {fileNameOf('settings.json')}
+                    <IconExternalLink />
+                  </span>
                 </Row>
               </div>
             </>

@@ -749,7 +749,12 @@ button:focus,
 
 /* 说明按钮与标签文字的间距:label 是裸文本(不是元素),`* + *` 选不中,
    必须直接给 .hint-btn 加 margin */
-.row-label .hint-btn { margin-left: 14px; }
+.row-label .hint-btn { margin-left: 8px; }
+/* 存储页的条目数 */
+.storage-num {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 /* 说明按钮:点一下才展开说明文字(悬停不弹原生提示、光标也保持普通指针) */
 .hint-btn {
   display: inline-grid;

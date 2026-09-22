@@ -254,6 +254,16 @@ export default function App() {
   }, [pinned]);
 
   /** 保存设置:先乐观更新界面,后端返回的才是最终值(热键注册失败会退回去并抛错) */
+  // "存储"页的条目统计:临时=未收藏也未分组;三类可能重叠(一条记录可既分组又收藏)
+  const storageCounts = useMemo(
+    () => ({
+      transient: items.filter((r) => !r.favorite && !r.group).length,
+      grouped: items.filter((r) => !!r.group).length,
+      favorite: items.filter((r) => !!r.favorite).length,
+    }),
+    [items]
+  );
+
   const persistSettings = async (next) => {
     const previous = settings || DEFAULT_SETTINGS;
     setSettings(next);
@@ -584,6 +594,7 @@ export default function App() {
           onChange={persistSettings}
           onClose={() => setView('list')}
           t={t}
+          counts={storageCounts}
         />
       </div>
     );
