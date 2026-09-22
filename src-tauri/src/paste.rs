@@ -1,5 +1,6 @@
 //! 粘贴:写回剪贴板 + 模拟 Ctrl+V(参考 QuickClipboard paste/keyboard.rs)
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clipboard_rs::{Clipboard, ClipboardContent};
@@ -16,11 +17,29 @@ use crate::state::{self, ClipboardRecord};
 /// 不带 async 的同步命令跑在 GTK 主线程上,`window.hide()` 这类窗口请求只能排在
 /// 命令返回之后才被处理,于是"窗口还占着焦点时 Ctrl+V 就已经发出去了",目标应用
 /// 什么也收不到——麒麟上的表现就是"剪贴板窗口消失了,但没有任何内容被粘贴"。
+/// 粘贴互斥:整条"写剪贴板→隐藏→归还焦点→注入"链路同一时刻只允许一条,
+/// 两条并发会互相踩(焦点/修饰键状态交错,注入变成裸 v 或落空)。
+/// 前端已过滤按键自动重复,这里是兜底(比如极快地连点两条记录)。
+static PASTE_BUSY: AtomicBool = AtomicBool::new(false);
+
 #[tauri::command(async)]
 pub fn cmd_paste_item(app: AppHandle, id: u64) -> Result<(), String> {
+    if PASTE_BUSY
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        klog!("[粘贴] 已有粘贴在进行,忽略本次请求(id={id})");
+        return Ok(());
+    }
+    let result = do_paste_item(&app, id);
+    PASTE_BUSY.store(false, Ordering::SeqCst);
+    result
+}
+
+fn do_paste_item(app: &AppHandle, id: u64) -> Result<(), String> {
     let rec = state::get_by_id(id).ok_or("记录不存在")?;
-    let result = paste_record(&app, &rec);
-    // 粘贴失败时窗口已经隐藏,前端的错误横幅是看不到的,必须打到 stderr 上
+    let result = paste_record(app, &rec);
+    // 粘贴失败时窗口已经隐藏,前端的错误横幅是看不到的,必须打到日志上
     if let Err(e) = &result {
         klog!("[粘贴] 命令失败: {e}");
     }

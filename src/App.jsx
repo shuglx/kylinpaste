@@ -469,6 +469,9 @@ export default function App() {
   overlayRef.current = Boolean(confirm || tagPop || menuPos);
   useEffect(() => {
     const onKey = (e) => {
+      // 按住不放会触发按键自动重复(e.repeat):一次物理按下不该粘多次,
+      // 否则多条粘贴链路并发交错,注入的 Ctrl+V 会变成裸 v 或干脆没反应
+      if (e.repeat) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         if (overlayRef.current) return;
