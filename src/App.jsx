@@ -419,8 +419,14 @@ export default function App() {
   // ---------------------------------------------------------- 键盘
 
   // 键盘:Esc 收起窗口,Ctrl/Cmd+数字键 1-9 快速粘贴("便捷粘贴"打开时生效)
+  // ↑/↓ 在记录间移动选中项,回车粘贴选中项(等同鼠标点击)
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
+  const [selIdx, setSelIdx] = useState(0);
+  const selIdxRef = useRef(0);
+  selIdxRef.current = selIdx;
+  const selRowRef = useRef(null);
+  const listRef = useRef(null);
   const quickPasteRef = useRef(true);
   quickPasteRef.current = quickPaste;
   const viewRef = useRef(view);
@@ -469,9 +475,6 @@ export default function App() {
   overlayRef.current = Boolean(confirm || tagPop || menuPos);
   useEffect(() => {
     const onKey = (e) => {
-      // 按住不放会触发按键自动重复(e.repeat):一次物理按下不该粘多次,
-      // 否则多条粘贴链路并发交错,注入的 Ctrl+V 会变成裸 v 或干脆没反应
-      if (e.repeat) return;
       if (e.key === 'Escape') {
         e.preventDefault();
         if (overlayRef.current) return;
@@ -479,10 +482,34 @@ export default function App() {
         return;
       }
 
+      // 键盘导航:↑/↓ 选记录,回车粘贴(等同鼠标点击)。
+      // 设置页打开或有弹层(分组菜单/编辑/确认框)在前时不参与
+      if (viewRef.current !== 'list' || overlayRef.current) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const n = visibleRef.current.length;
+        if (!n) return;
+        setSelIdx((i) =>
+          e.key === 'ArrowDown' ? (i + 1 >= n ? 0 : i + 1) : i - 1 < 0 ? n - 1 : i - 1
+        );
+        return;
+      }
+      if (e.key === 'Enter') {
+        // 按住回车会自动重复:一次按下只粘一次
+        if (e.repeat) return;
+        const rec = visibleRef.current[selIdxRef.current];
+        if (!rec) return;
+        e.preventDefault();
+        runAfterModifierRelease(() => pasteItem(rec.id));
+        return;
+      }
+
       // 快捷粘贴:Ctrl(mac 上是 ⌘)+ 数字键 1-9(此时角标也是亮的)
       const mod = IS_MAC ? e.metaKey : e.ctrlKey;
       if (mod) {
         if (e.altKey || e.shiftKey) return;
+        // 自动重复防护:一次按下只粘一次(否则多条粘贴链路并发,注入变裸 v)
+        if (e.repeat) return;
         const n = parseInt(e.key, 10);
         if (n >= 1 && n <= 9) {
           e.preventDefault();
@@ -547,12 +574,39 @@ export default function App() {
   // 每次呼出窗口都把焦点放回搜索框:直接就能打字筛选
   useEffect(() => {
     const unlisten = listen('tauri://focus', () => {
-      if (viewRef.current === 'list') inputRef.current?.focus();
+      if (viewRef.current === 'list') {
+        inputRef.current?.focus();
+        setSelIdx(0);
+      }
     });
     return () => {
       unlisten.then((f) => f());
     };
   }, []);
+
+  // 搜索条件变化:选中项回到第一条
+  useEffect(() => {
+    setSelIdx(0);
+  }, [query]);
+
+  // 列表缩短(记录被清/过滤)时把选中项收拢到合法范围
+  useEffect(() => {
+    setSelIdx((i) => Math.min(i, Math.max(0, visible.length - 1)));
+  }, [visible.length]);
+
+  // 选中项滚出可视区时带回来(手动算滚动量,老 WebKitGTK 的 scrollIntoView 选项不全)
+  useEffect(() => {
+    const row = selRowRef.current;
+    const list = listRef.current;
+    if (!row || !list) return;
+    const r = row.getBoundingClientRect();
+    const lr = list.getBoundingClientRect();
+    if (r.top < lr.top) {
+      list.scrollTop -= lr.top - r.top;
+    } else if (r.bottom > lr.bottom) {
+      list.scrollTop += r.bottom - lr.bottom;
+    }
+  }, [selIdx, visible]);
 
   // 点空白处收起弹层(弹层自己会 stopPropagation)
   useEffect(() => {
@@ -668,7 +722,7 @@ export default function App() {
         </div>
       </div>
 
-      <main className="list">
+      <main className="list" ref={listRef}>
         {visible.length === 0 && (
           <div className="empty">
             <strong>{items.length === 0 ? t.emptyTitle : t.noMatchTitle}</strong>
@@ -682,7 +736,8 @@ export default function App() {
           return (
             <div
               key={rec.id}
-              className="item"
+              ref={selIdx === idx ? selRowRef : undefined}
+              className={`item${selIdx === idx ? ' sel' : ''}`}
               onClick={() => runAfterModifierRelease(() => pasteItem(rec.id))}
               title={t.pasteHint}
             >

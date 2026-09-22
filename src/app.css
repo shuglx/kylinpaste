@@ -188,6 +188,11 @@ button:focus,
 .item:hover {
   background: var(--hover);
 }
+/* 键盘导航选中的记录:描边高亮,区别于悬停底色 */
+.item.sel {
+  box-shadow: inset 0 0 0 2px var(--accent);
+  background: var(--hover);
+}
 
 .thumb {
   position: relative;
