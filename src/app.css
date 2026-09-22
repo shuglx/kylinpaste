@@ -755,6 +755,13 @@ button:focus,
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+/* 存储页尾部的隐私说明:常驻,不藏进 tooltip */
+.storage-note {
+  padding: 10px 14px 4px;
+  color: var(--muted-2);
+  font-size: 11.5px;
+  line-height: 1.7;
+}
 /* 说明按钮:点一下才展开说明文字(悬停不弹原生提示、光标也保持普通指针) */
 .hint-btn {
   display: inline-grid;

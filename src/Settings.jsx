@@ -11,7 +11,7 @@ import {
 } from './icons.jsx';
 
 const GITHUB_URL = 'https://github.com/shuglx/kylinpaste';
-const KEEP_OPTIONS = [300, 500, 1000];
+const KEEP_OPTIONS = [100, 300, 500, 1000];
 
 const isMac = () => /mac/i.test(navigator.platform || navigator.userAgent);
 
@@ -453,6 +453,9 @@ export default function Settings({
                   </span>
                 </Row>
               </div>
+
+              {/* 隐私说明常驻展示(原来挤在"最大条目数"的 tooltip 里) */}
+              <div className="storage-note">{t.storagePrivacy}</div>
             </>
           ) : (
             <>

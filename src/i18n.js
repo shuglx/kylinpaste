@@ -74,6 +74,7 @@ const zh = {
   storageRecordsFile: '记录文件',
   storageRecordsTip: '临时、分组、收藏条目都存放在这一个文件里',
   storageSettingsFile: '设置文件',
+  storagePrivacy: '所有剪贴板历史数据仅在本机存储，不含任何网络传输功能。',
   openPathFailed: (e) => `打开文件失败：${e}`,
 
   sectionI18n: '国际化',
@@ -100,7 +101,7 @@ const zh = {
   pathCopied: '路径已复制',
   maxItems: '最大条目数',
   maxItemsHint:
-    '仅限制未收藏、未分组的临时记录数，收藏与分组的记录独立存储、不会被统一清理。\n所有剪贴板历史数据仅在本机存储，不含任何网络传输功能。',
+    '仅限制未收藏、未分组的临时记录数，收藏与分组的记录独立存储、不会被统一清理。',
   language: '语言',
   langZh: '中文',
   langEn: 'English',
@@ -177,6 +178,7 @@ const en = {
   storageRecordsFile: 'Records file',
   storageRecordsTip: 'Transient, grouped and starred records all live in this one file',
   storageSettingsFile: 'Settings file',
+  storagePrivacy: 'All clipboard history stays on this machine — no network transfer of any kind.',
   openPathFailed: (e) => `Failed to open file: ${e}`,
 
   sectionI18n: 'Language',
@@ -203,7 +205,7 @@ const en = {
   pathCopied: 'Path copied',
   maxItems: 'Max records',
   maxItemsHint:
-    'Limits temporary records that are neither starred nor grouped; starred and grouped records are stored separately and are never cleared in bulk.\nAll clipboard history stays on this machine — no network transfer of any kind.',
+    'Limits temporary records that are neither starred nor grouped; starred and grouped records are stored separately and are never cleared in bulk.',
   language: 'Language',
   langZh: '中文',
   langEn: 'English',
