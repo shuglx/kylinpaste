@@ -2,8 +2,6 @@
 
 ![Header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=170&text=KylinPaste&fontSize=58&animation=fadeIn)
 
-> 麒麟操作系统上好用的剪贴板 —— 为信创办公场景而生
-
 [![Release](https://img.shields.io/github/v/release/shuglx/kylinpaste?style=flat-square)](https://github.com/shuglx/kylinpaste/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-%E9%BA%92%E9%BA%9F%20ARM64%20%7C%20macOS%20Apple%20Silicon-2b6cb8?style=flat-square)](https://github.com/shuglx/kylinpaste/releases)
@@ -21,9 +19,9 @@
 - Linux 侧通用的方案（CopyQ、GPaste）在麒麟上要么缺依赖、要么对低版本 WebKitGTK/UKUI 桌面兼容不佳，且缺少针对国产办公场景（WPS、国产浏览器、微信/QX)的适配打磨;
 - 办公中最常用的"复制 → 找历史 → 再粘贴"这件事，恰恰是信创环境里体验缺口最大的。
 
-KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——以麒麟 V10 SP1 自带的 WebKitGTK 2.28 基线构建，UI 与交互按国产桌面（UKUI）的真实问题逐一适配，同时提供 macOS 版本方便开发期预览。
+KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——以麒麟 V10 SP1 自带的 WebKitGTK 2.28 基线构建，UI 与交互按国产桌面（UKUI）的真实问题逐一适配，同时提供 macOS 版本方便开发预览。
 
-开发所依据的目标环境（银河麒麟桌面操作系统 V10 SP1，版本号 2203）：
+参考运行目标（银河麒麟桌面操作系统 V10）：
 
 ![银河麒麟桌面操作系统 V10 SP1](docs/screenshots/kylin-os.png)
 
