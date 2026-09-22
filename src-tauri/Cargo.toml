@@ -1,6 +1,6 @@
 [package]
 name = "kylinpaste"
-version = "0.2.1"
+version = "0.2.2"
 license = "MIT"
 description = "麒麟桌面剪贴板历史管理工具"
 authors = ["ryan"]

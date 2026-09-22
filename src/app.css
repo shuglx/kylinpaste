@@ -47,6 +47,13 @@ button {
   font: inherit;
   cursor: pointer;
 }
+/* 麒麟(老 WebKitGTK)点击按钮后会在四周画一圈虚线焦点框,mac 上没有,很难看。
+   直接去掉 :focus 的 outline(不能把 :focus-visible 写进同一条规则——
+   老引擎不认识这个伪类会让整条规则失效);键盘操作的可见反馈由 hover/on 态兜底 */
+button:focus,
+.hint-btn:focus {
+  outline: none;
+}
 
 .app {
   display: flex;
@@ -740,7 +747,7 @@ button {
   min-width: 0;
 }
 
-.row-label > * + * { margin-left: 6px; }
+.row-label > * + * { margin-left: 10px; }
 /* 说明按钮:点一下才展开说明文字(悬停不弹原生提示、光标也保持普通指针) */
 .hint-btn {
   display: inline-grid;
