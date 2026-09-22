@@ -1894,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "kylinpaste"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "auto-launch",
  "clipboard-rs",
