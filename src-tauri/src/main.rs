@@ -2,15 +2,16 @@
 
 mod appinfo;
 mod clipboard_service;
+mod hotkey;
 mod paste;
+mod settings;
 mod state;
 mod system;
-mod tray;
 #[cfg(target_os = "linux")]
 mod x11;
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use tauri::{GlobalShortcutManager, Manager, WindowEvent};
+use tauri::{Manager, WindowEvent};
 
 /// 连续两次切换的最小间隔(毫秒):多个热键来源或键盘重复时不至于"闪一下又消失"
 const TOGGLE_DEBOUNCE_MS: u64 = 250;
@@ -26,10 +27,8 @@ fn main() {
     x11::remember_target_window();
 
     tauri::Builder::default()
-        .system_tray(tray::create())
-        .on_system_tray_event(tray::handle_event)
         .on_window_event(|event| {
-            // 关闭主窗口时隐藏到托盘而不是退出
+            // 窗口没有标题栏,正常关不掉;这里只做防御:请求关闭时收起窗口而不是退出
             if let WindowEvent::CloseRequested { api, .. } = event.event() {
                 if event.window().label() == "main" {
                     api.prevent_close();
@@ -46,42 +45,15 @@ fn main() {
                 std::process::exit(0);
             }
 
-            // 全局快捷键 Ctrl+Alt+V 唤起/隐藏主窗口(失败不致命,降级继续)
-            // Linux 优先用自建实现(原因见 x11.rs 顶部注释),抓键失败再回退 Tauri 内置实现
-            let hotkey_handle = app.handle().clone();
-            #[cfg(target_os = "linux")]
-            let own_hotkey = match x11::start_hotkey_listener({
-                let handle = hotkey_handle.clone();
-                move || toggle_main_window(&handle)
-            }) {
-                Ok(()) => true,
-                Err(e) => {
-                    eprintln!("[启动] 自建全局热键不可用({e}),回退 Tauri 内置实现");
-                    false
-                }
-            };
-            #[cfg(not(target_os = "linux"))]
-            let own_hotkey = false;
-
-            if !own_hotkey {
-                if let Err(e) = app
-                    .global_shortcut_manager()
-                    .register("Ctrl+Alt+V", move || toggle_main_window(&hotkey_handle))
-                {
-                    eprintln!("[启动] 注册全局快捷键 Ctrl+Alt+V 失败(应用继续运行,可从托盘唤起): {e}");
-                } else {
-                    eprintln!("[启动] 全局快捷键已注册(Tauri 内置实现)");
-                }
-            }
-
-            // 托盘菜单勾选状态与自启状态同步
-            let _ = app
-                .tray_handle()
-                .get_item("autostart")
-                .set_selected(system::is_autostart());
+            // 设置要在历史和热键之前载入:保留条数上限、热键都要用它的值
+            settings::start(&app.handle());
 
             // 载入上次的历史(落盘文件),再启动剪贴板监听
             state::start_persistence(&app.handle());
+
+            // 全局热键唤起/隐藏主窗口(失败不致命:可在设置界面改绑)
+            // Linux 优先用自建实现(原因见 x11.rs 顶部注释),抓键失败回退 Tauri 内置实现
+            hotkey::init(&app.handle(), &settings::get().hotkey);
 
             clipboard_service::start(app.handle().clone())?;
             eprintln!("[启动] 剪贴板监听已启动");
@@ -105,15 +77,20 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             state::cmd_get_history,
-            state::cmd_clear_history,
             state::cmd_set_group,
+            state::cmd_set_favorite,
+            state::cmd_import_favorites,
             state::cmd_delete_records,
             state::cmd_get_asset_dirs,
             paste::cmd_paste_item,
+            settings::cmd_get_settings,
+            settings::cmd_set_settings,
             system::cmd_get_autostart,
             system::cmd_set_autostart,
+            cmd_get_app_info,
             cmd_set_always_on_top,
             cmd_hide_main,
+            cmd_quit_app,
         ])
         .run(tauri::generate_context!())
         .expect("KylinPaste 运行失败");
@@ -153,6 +130,29 @@ fn cmd_set_always_on_top(app: tauri::AppHandle, enabled: bool) -> Result<bool, S
 #[tauri::command]
 fn cmd_hide_main(app: tauri::AppHandle) {
     hide_main(&app);
+}
+
+/// 应用名与版本(设置界面"关于"页展示)
+#[derive(serde::Serialize)]
+struct AppInfo {
+    name: String,
+    version: String,
+}
+
+#[tauri::command]
+fn cmd_get_app_info(app: tauri::AppHandle) -> AppInfo {
+    let pkg = app.package_info();
+    AppInfo {
+        name: pkg.name.clone(),
+        version: pkg.version.to_string(),
+    }
+}
+
+/// 退出应用。去掉托盘之后,这是唯一的退出入口(设置界面 → 关于)。
+#[tauri::command]
+fn cmd_quit_app(app: tauri::AppHandle) {
+    println!("[启动] 用户从设置界面退出应用");
+    app.exit(0);
 }
 
 /// 显示主窗口并抢到焦点(粘贴时需要把焦点还给"上一个活动窗口",所以先记下来)

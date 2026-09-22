@@ -1,6 +1,6 @@
 [package]
 name = "kylinpaste"
-version = "0.1.0"
+version = "0.2.0"
 description = "麒麟桌面剪贴板历史管理工具"
 authors = ["ryan"]
 edition = "2021"
@@ -12,7 +12,7 @@ tauri-build = { version = "1.5", features = [] }
 # window-start-dragging:无标题栏窗口靠 data-tauri-drag-region 拖动
 # protocol-asset:前端用 asset:// 协议加载本地图片缩略图(见 tauri.conf.json 的 assetScope)
 # 这两个能力在 v1 里都由 allowlist 的编译期开关控制,配置与 features 必须一致
-tauri = { version = "1.8", features = [ "macos-private-api", "system-tray", "global-shortcut", "window-start-dragging", "protocol-asset"] }
+tauri = { version = "1.8", features = [ "macos-private-api", "global-shortcut", "window-start-dragging", "protocol-asset", "shell-open"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # 剪贴板监听/读写(Linux X11 / macOS)

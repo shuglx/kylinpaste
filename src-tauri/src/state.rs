@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use tauri::{AppHandle, Manager};
 
 /// 一条剪贴板记录
@@ -33,6 +33,9 @@ pub struct ClipboardRecord {
     /// 所属分组(每条记录最多一个);None = 未分组
     #[serde(default)]
     pub group: Option<String>,
+    /// 收藏。收藏和分组的记录**不占用**"保留条数"上限,也不会被自动淘汰
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 /// 落盘文件结构(app_data_dir/history.json)
@@ -52,8 +55,24 @@ static DIRTY: AtomicBool = AtomicBool::new(false);
 /// 应用数据目录(启动时确定)
 static DATA_DIR: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 
-/// 定长队列上限:超出后丢弃最旧的一条记录(只丢记录,不删磁盘文件)
-const MAX_HISTORY: usize = 500;
+/// 保留的"临时记录"条数上限(默认 500,设置界面可改)。
+/// 收藏与分组的记录不计入这个数,也不会被淘汰,所以总量可能超过它。
+const MAX_HISTORY_DEFAULT: usize = 500;
+static MAX_ITEMS: AtomicUsize = AtomicUsize::new(MAX_HISTORY_DEFAULT);
+
+/// 当前保留条数上限
+pub fn max_items() -> usize {
+    MAX_ITEMS.load(Ordering::SeqCst)
+}
+
+/// 设置上限并立即按新上限裁剪(设置界面改"保留条目总数"时调用)
+pub fn set_max_items(limit: usize) {
+    MAX_ITEMS.store(limit.max(1), Ordering::SeqCst);
+    let mut hist = HISTORY.lock();
+    trim(&mut hist, max_items());
+    drop(hist);
+    mark_dirty();
+}
 /// 图片目录(相对应用数据目录)
 pub const IMAGES_DIR: &str = "clipboard_images";
 /// 缩略图目录(列表里展示用,长边 240px)
@@ -124,12 +143,19 @@ fn load() {
         Ok(file) => {
             let mut hist = HISTORY.lock();
             hist.clear();
-            for rec in file.items.into_iter().take(MAX_HISTORY) {
+            for rec in file.items {
                 hist.push_back(rec);
             }
+            let before = hist.len();
+            trim(&mut hist, max_items());
             let max_id = hist.iter().map(|r| r.id).max().unwrap_or(0);
             NEXT_ID.store(max_id + 1, Ordering::SeqCst);
-            println!("[持久化] 载入 {} 条历史", hist.len());
+            println!(
+                "[持久化] 载入 {} 条历史(临时上限 {},裁掉 {})",
+                hist.len(),
+                max_items(),
+                before - hist.len()
+            );
         }
         Err(e) => eprintln!(
             "[持久化] 历史文件解析失败({e}),本次从空开始: {}",
@@ -179,16 +205,34 @@ fn insert_record(hist: &mut VecDeque<ClipboardRecord>, mut rec: ClipboardRecord)
         if rec.group.is_none() {
             rec.group = old.group;
         }
+        // 收藏过的内容重新复制,仍然是收藏
+        rec.favorite |= old.favorite;
     }
     rec.id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     rec.created_at = now_ms();
     hist.push_front(rec.clone());
-    // 定长队列:超过上限就丢弃最旧的一条记录(只丢记录本身,
-    // 不碰磁盘上的任何文件——被挤出的图片/文件路径信息就此不再被引用)
-    while hist.len() > MAX_HISTORY {
-        hist.pop_back();
-    }
+    trim(hist, max_items());
     rec
+}
+
+/// 一条记录是不是"临时记录"(既没收藏也没分组)——只有这种才会被上限淘汰
+fn is_transient(rec: &ClipboardRecord) -> bool {
+    !rec.favorite && rec.group.is_none()
+}
+
+/// 按"临时记录不超过 limit 条"裁剪:只从最旧的一端淘汰临时记录,
+/// 收藏/分组过的记录一律保留(与界面上"清理临时记录"的规则保持一致)。
+fn trim(hist: &mut VecDeque<ClipboardRecord>, limit: usize) {
+    let transient = hist.iter().filter(|rec| is_transient(rec)).count();
+    let mut excess = transient.saturating_sub(limit);
+    let mut index = hist.len();
+    while excess > 0 && index > 0 {
+        index -= 1;
+        if is_transient(&hist[index]) {
+            hist.remove(index);
+            excess -= 1;
+        }
+    }
 }
 
 /// 新增(或去重置顶)一条记录并通知前端
@@ -206,9 +250,36 @@ pub fn get_by_id(id: u64) -> Option<ClipboardRecord> {
     HISTORY.lock().iter().find(|r| r.id == id).cloned()
 }
 
-pub fn clear() {
-    let ids: Vec<u64> = HISTORY.lock().iter().map(|r| r.id).collect();
-    remove_ids(&ids);
+/// 设置(或取消)收藏。收藏后不占"保留条数"上限,也不会被自动淘汰。
+pub fn set_favorite(id: u64, favorite: bool) -> Option<ClipboardRecord> {
+    let mut hist = HISTORY.lock();
+    let rec = hist.iter_mut().find(|r| r.id == id)?;
+    rec.favorite = favorite;
+    let updated = rec.clone();
+    drop(hist);
+    mark_dirty();
+    Some(updated)
+}
+
+/// 迁移用:把"早先存在前端 localStorage 里、按内容哈希记的收藏"补到记录上。
+/// 返回被打上收藏的条数(幂等,重复调用不会有副作用)。
+pub fn import_favorites(hashes: &[String]) -> usize {
+    if hashes.is_empty() {
+        return 0;
+    }
+    let mut hist = HISTORY.lock();
+    let mut marked = 0;
+    for rec in hist.iter_mut() {
+        if !rec.favorite && hashes.iter().any(|h| *h == rec.hash) {
+            rec.favorite = true;
+            marked += 1;
+        }
+    }
+    drop(hist);
+    if marked > 0 {
+        mark_dirty();
+    }
+    marked
 }
 
 // ---------------------------------------------------------------- 分组 / 删除
@@ -311,9 +382,16 @@ pub fn cmd_get_history() -> Vec<ClipboardRecord> {
     get_all()
 }
 
+/// 收藏 / 取消收藏一条记录
 #[tauri::command]
-pub fn cmd_clear_history() {
-    clear();
+pub fn cmd_set_favorite(id: u64, favorite: bool) -> Result<ClipboardRecord, String> {
+    set_favorite(id, favorite).ok_or_else(|| "记录不存在".to_string())
+}
+
+/// 把前端旧版存在 localStorage 里的收藏导入到记录上(启动时调一次)
+#[tauri::command]
+pub fn cmd_import_favorites(hashes: Vec<String>) -> usize {
+    import_favorites(&hashes)
 }
 
 /// 给一条记录指定分组(传 null/空串 = 取消分组)
@@ -344,6 +422,7 @@ mod tests {
             created_at: 0,
             source_app: None,
             group: None,
+            favorite: false,
         }
     }
 
@@ -356,19 +435,49 @@ mod tests {
         HISTORY.lock().iter().map(|r| r.id).collect()
     }
 
-    /// 同一份内容重新复制:分组跟着内容走,不会因为去重置顶而丢
+    /// 同一份内容重新复制:分组与收藏都跟着内容走,不会因为去重置顶而丢
     #[test]
-    fn dedupe_inherits_group() {
+    fn dedupe_inherits_group_and_favorite() {
         let first = insert("h-dedupe", "hello");
         set_group(first.id, Some("work".into()));
+        set_favorite(first.id, true);
 
         let second = insert("h-dedupe", "hello");
         assert_eq!(second.group.as_deref(), Some("work"));
+        assert!(second.favorite, "收藏过的内容重新复制仍是收藏");
 
         let hist = HISTORY.lock();
         let same: Vec<&ClipboardRecord> = hist.iter().filter(|r| r.hash == "h-dedupe").collect();
         assert_eq!(same.len(), 1, "同哈希只应保留一条");
         assert_eq!(same[0].id, second.id, "新记录应顶到最前");
+    }
+
+    /// 保留条数上限只管"临时记录":收藏与分组的一律不淘汰(与界面"清理"规则一致)
+    #[test]
+    fn trim_spares_favorite_and_grouped() {
+        let mut hist = VecDeque::new();
+        // 越早插入的越旧:临时、收藏、分组、临时
+        let oldest = insert_record(&mut hist, rec("h-t1", "1"));
+        let fav = insert_record(&mut hist, rec("h-fav", "2"));
+        let grp = insert_record(&mut hist, rec("h-grp", "3"));
+        let newest = insert_record(&mut hist, rec("h-t2", "4"));
+        for r in hist.iter_mut() {
+            if r.id == fav.id {
+                r.favorite = true;
+            }
+            if r.id == grp.id {
+                r.group = Some("web".into());
+            }
+        }
+
+        trim(&mut hist, 1); // 只允许 1 条临时记录
+
+        let ids: Vec<u64> = hist.iter().map(|r| r.id).collect();
+        assert!(ids.contains(&fav.id), "收藏的留下");
+        assert!(ids.contains(&grp.id), "分组的留下");
+        assert!(!ids.contains(&oldest.id), "最旧的临时记录先淘汰");
+        assert!(ids.contains(&newest.id), "最新的临时记录保留");
+        assert_eq!(hist.iter().filter(|r| is_transient(r)).count(), 1);
     }
 
     /// 分组名:去空白、超长截断、空白等于取消分组

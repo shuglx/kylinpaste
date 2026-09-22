@@ -12,8 +12,12 @@
 //!    这里直接用键盘映射把 V / Control_L 解析成键码再用 XTEST 注入,链路更短更可控。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Sender};
 use std::time::{Duration, Instant};
+
+use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
@@ -26,11 +30,6 @@ use x11rb::rust_connection::RustConnection;
 use x11rb::CURRENT_TIME;
 
 type XResult<T> = Result<T, String>;
-
-/// 全局热键的修饰键位掩码:ControlMask(1<<2) | Mod1Mask(1<<3,即 Alt)
-const HOTKEY_MODS: u16 = (1 << 2) | (1 << 3);
-/// 全局热键主键(X11 keysym,小写字母即 ASCII 码)
-const HOTKEY_KEY: u32 = b'v' as u32;
 
 // 用于识别"锁定类"修饰键的 keysym
 const KEYSYM_CAPSLOCK: u32 = 0xffe5;
@@ -326,41 +325,109 @@ fn modifier_combos(bits: u16) -> Vec<u16> {
     combos
 }
 
-/// 注册全局热键 Ctrl+Alt+V,命中时在独立线程里回调 `on_hotkey`。
+/// 待生效的加速键:监听线程轮询到变化就重新抓键(用来支持运行时改绑)
+static HOTKEY_REQ: Lazy<Mutex<Option<(u64, String)>>> = Lazy::new(|| Mutex::new(None));
+/// 重新抓键的结果回传通道:`set_hotkey` 同步等结果,好把失败原因报给设置界面
+static HOTKEY_REPLY: Lazy<Mutex<Option<Sender<XResult<()>>>>> = Lazy::new(|| Mutex::new(None));
+static HOTKEY_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 主键名 → X11 keysym(小写字母、数字的 keysym 就等于 ASCII 码)
+fn keysym_of(token: &str) -> Option<u32> {
+    let lower = token.to_ascii_lowercase();
+    let named = match lower.as_str() {
+        "," => Some(0x2c),
+        "-" => Some(0x2d),
+        "." => Some(0x2e),
+        "/" => Some(0x2f),
+        "space" => Some(0x20),
+        "=" => Some(0x3d),
+        "backspace" => Some(0xff08),
+        "tab" => Some(0xff09),
+        "enter" | "return" => Some(0xff0d),
+        "escape" | "esc" => Some(0xff1b),
+        "home" => Some(0xff50),
+        "left" => Some(0xff51),
+        "up" => Some(0xff52),
+        "right" => Some(0xff53),
+        "down" => Some(0xff54),
+        "pageup" => Some(0xff55),
+        "pagedown" => Some(0xff56),
+        "end" => Some(0xff57),
+        "delete" | "del" => Some(0xffff),
+        _ => None,
+    };
+    if named.is_some() {
+        return named;
+    }
+    // F1..F12
+    if let Some(num) = lower.strip_prefix('f').and_then(|n| n.parse::<u32>().ok()) {
+        if (1..=12).contains(&num) {
+            return Some(0xffbe + num - 1);
+        }
+    }
+    let mut chars = lower.chars();
+    match (chars.next(), chars.next()) {
+        (Some(c), None) if c.is_ascii_alphanumeric() => Some(c as u32),
+        _ => None,
+    }
+}
+
+/// 把加速键(如 `Ctrl+Alt+V`)解析成 (修饰键掩码, 主键 keysym)
+fn parse_accel(accel: &str) -> XResult<(u16, u32)> {
+    let mut mods = 0u16;
+    let mut key = None;
+    for token in accel.split('+') {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        match token.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods |= 1 << 2,
+            "alt" | "option" | "mod1" => mods |= 1 << 3,
+            "shift" => mods |= 1 << 0,
+            "super" | "cmd" | "command" | "meta" | "win" => mods |= 1 << 6,
+            _ => key = keysym_of(token),
+        }
+    }
+    let keysym = key.ok_or_else(|| format!("无法识别热键里的主键: {accel}"))?;
+    if mods == 0 {
+        return Err(format!("热键至少要带一个修饰键: {accel}"));
+    }
+    Ok((mods, keysym))
+}
+
+/// 当前抓住的组合(改绑时按原样 ungrab)
+struct Grab {
+    keycode: u8,
+    mods: u16,
+    lock_combos: Vec<u16>,
+}
+
+/// 按加速键抓键:**先抓新的,成功后再放开旧的**,改绑失败时旧热键仍然可用。
 ///
-/// 返回 Ok 表示抓键成功(此后由本模块负责触发);
-/// 返回 Err 表示抓键不可用,调用方应回退到其它实现。
-pub fn start_hotkey_listener<F>(on_hotkey: F) -> XResult<()>
-where
-    F: Fn() + Send + 'static,
-{
-    let (conn, root) = connect()?;
-
-    let keymap = KeyMap::load(&conn)?;
+/// 锁定键(CapsLock/NumLock/ScrollLock)开着的组合要各注册一份,所以一个热键
+/// 实际会 grab 多个组合;某个组合被别的程序占用不影响其它组合。
+fn grab_hotkey(
+    conn: &RustConnection,
+    root: Window,
+    keymap: &KeyMap,
+    accel: &str,
+    previous: Option<&Grab>,
+) -> XResult<Grab> {
+    let (mods, keysym) = parse_accel(accel)?;
     let keycode = keymap
-        .keycode_of(HOTKEY_KEY)
-        .ok_or_else(|| format!("键盘映射里找不到按键 {}", HOTKEY_KEY as u8 as char))?;
-    let lock_bits = lock_modifier_bits(&conn, &keymap)?;
-    let combos = modifier_combos(lock_bits);
-
-    // 被动抓取(owner_events=false)的按键事件按事件掩码投递到根窗口
-    conn.change_window_attributes(
-        root,
-        &ChangeWindowAttributesAux::new()
-            .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
-    )
-    .map_err(|e| format!("监听根窗口按键失败: {e}"))?
-    .check()
-    .map_err(|e| format!("监听根窗口按键失败: {e}"))?;
+        .keycode_of(keysym)
+        .ok_or_else(|| format!("键盘映射里找不到这个按键(keysym={keysym:#x})"))?;
+    let lock_combos = modifier_combos(lock_modifier_bits(conn, keymap)?);
 
     let mut grabbed = 0usize;
     let mut failures = Vec::new();
-    for extra in &combos {
+    for extra in &lock_combos {
         let result = conn
             .grab_key(
                 false,
                 root,
-                ModMask::from(HOTKEY_MODS | extra),
+                ModMask::from(mods | extra),
                 keycode,
                 GrabMode::ASYNC,
                 GrabMode::ASYNC,
@@ -369,7 +436,6 @@ where
             .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
         match result {
             Ok(()) => grabbed += 1,
-            // 某个组合被别的程序占用不影响其它组合(例如系统只抢了带 NumLock 的那个)
             Err(e) => failures.push(format!("mods+{extra:#x}: {e}")),
         }
     }
@@ -385,11 +451,60 @@ where
             failures.join("; ")
         );
     }
+
+    // 键位与修饰键完全相同时不能 ungrab——那会把刚抓到的这份也放掉
+    if let Some(old) = previous {
+        if old.keycode != keycode || old.mods != mods {
+            for extra in &old.lock_combos {
+                let _ = conn.ungrab_key(old.keycode, root, ModMask::from(old.mods | extra));
+            }
+        }
+    }
     println!(
-        "[热键] 已抓取 Ctrl+Alt+{} (keycode={keycode}, 组合 {grabbed}/{})",
-        HOTKEY_KEY as u8 as char,
-        combos.len()
+        "[热键] 已抓取 {accel} (keycode={keycode}, 组合 {grabbed}/{})",
+        lock_combos.len()
     );
+    Ok(Grab {
+        keycode,
+        mods,
+        lock_combos,
+    })
+}
+
+/// 运行时改绑全局热键:交给监听线程去做,并同步等它的结果(界面需要知道成没成)。
+pub fn set_hotkey(accel: &str) -> XResult<()> {
+    let seq = HOTKEY_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let (tx, rx) = channel();
+    *HOTKEY_REPLY.lock() = Some(tx);
+    *HOTKEY_REQ.lock() = Some((seq, accel.to_string()));
+    match rx.recv_timeout(Duration::from_secs(3)) {
+        Ok(result) => result,
+        Err(_) => Err("热键监听线程没有响应,改绑未生效".to_string()),
+    }
+}
+
+/// 注册全局热键并开始监听,命中时在独立线程里回调 `on_hotkey`。
+///
+/// 返回 Ok 表示抓键成功(此后由本模块负责触发);
+/// 返回 Err 表示抓键不可用,调用方应回退到其它实现。
+pub fn start_hotkey_listener<F>(accel: &str, on_hotkey: F) -> XResult<()>
+where
+    F: Fn() + Send + 'static,
+{
+    let (conn, root) = connect()?;
+    let keymap = KeyMap::load(&conn)?;
+
+    // 被动抓取(owner_events=false)的按键事件按事件掩码投递到根窗口
+    conn.change_window_attributes(
+        root,
+        &ChangeWindowAttributesAux::new()
+            .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+    )
+    .map_err(|e| format!("监听根窗口按键失败: {e}"))?
+    .check()
+    .map_err(|e| format!("监听根窗口按键失败: {e}"))?;
+
+    let mut current = Some(grab_hotkey(&conn, root, &keymap, accel, None)?);
 
     std::thread::spawn(move || {
         // 丢弃键盘自动重复。X 服务器在"没开启可检测自动重复"的客户端上,会把重复按键
@@ -402,29 +517,60 @@ where
         let mut held: HashMap<u8, u32> = HashMap::new();
         let mut repeat_pair: Option<(u8, u32)> = None;
         loop {
-            match conn.wait_for_event() {
-                Ok(Event::KeyPress(event)) => {
+            // 设置界面改了热键 → 重新抓键,并把结果回传给 set_hotkey
+            if let Some((seq, accel)) = HOTKEY_REQ.lock().clone() {
+                let result = match grab_hotkey(&conn, root, &keymap, &accel, current.as_ref()) {
+                    Ok(grab) => {
+                        current = Some(grab);
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                };
+                {
+                    let mut req = HOTKEY_REQ.lock();
+                    if matches!(req.as_ref(), Some((s, _)) if *s == seq) {
+                        *req = None;
+                    }
+                }
+                if let Some(tx) = HOTKEY_REPLY.lock().take() {
+                    let _ = tx.send(result);
+                }
+            }
+
+            let event = match conn.poll_for_event() {
+                Ok(Some(event)) => event,
+                // 没有事件就小睡一下(轮询式,才能及时发现上面的改绑请求)
+                Ok(None) => {
+                    std::thread::sleep(Duration::from_millis(20));
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("[热键] X11 事件读取失败,热键监听退出: {e}");
+                    break;
+                }
+            };
+
+            match event {
+                Event::KeyPress(event) => {
                     let synthetic = repeat_pair == Some((event.detail, event.time));
                     repeat_pair = None;
                     let was_held = held.insert(event.detail, event.time).is_some();
                     if synthetic || was_held {
                         continue;
                     }
-                    if event.detail == keycode
-                        && u16::from(event.state) & HOTKEY_MODS == HOTKEY_MODS
-                    {
-                        on_hotkey();
+                    if let Some(grab) = current.as_ref() {
+                        if event.detail == grab.keycode
+                            && u16::from(event.state) & grab.mods == grab.mods
+                        {
+                            on_hotkey();
+                        }
                     }
                 }
-                Ok(Event::KeyRelease(event)) => {
+                Event::KeyRelease(event) => {
                     repeat_pair = Some((event.detail, event.time));
                     held.remove(&event.detail);
                 }
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("[热键] X11 事件读取失败,热键监听退出: {e}");
-                    break;
-                }
+                _ => {}
             }
         }
     });
@@ -439,11 +585,11 @@ pub fn send_ctrl_v() -> XResult<()> {
     let (conn, root) = connect()?;
     let keymap = KeyMap::load(&conn)?;
     let v = keymap
-        .keycode_of(HOTKEY_KEY)
-        .ok_or("键盘映射里找不到按键 V")?;
+        .keycode_of(b'v' as u32)
+        .ok_or_else(|| "键盘映射里找不到按键 V".to_string())?;
     let ctrl = keymap
         .keycode_of(KEYSYM_CONTROL_L)
-        .ok_or("键盘映射里找不到 Control_L")?;
+        .ok_or_else(|| "键盘映射里找不到 Control_L".to_string())?;
 
     let fake = |keycode: u8, press: bool| -> XResult<()> {
         let type_ = if press {

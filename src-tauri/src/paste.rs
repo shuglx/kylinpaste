@@ -1,6 +1,6 @@
 //! 粘贴:写回剪贴板 + 模拟 Ctrl+V(参考 QuickClipboard paste/keyboard.rs)
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use clipboard_rs::{Clipboard, ClipboardContent};
 use tauri::{AppHandle, Manager};
@@ -48,26 +48,59 @@ pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String
     restore_focus();
     std::thread::sleep(Duration::from_millis(120));
 
-    // 4. 注入 Ctrl+V
+    // macOS 特例:app.hide() 之后偶尔我们仍是"最前"的那个应用(激活态没让出去),
+    // 这时注入的 ⌘V 会打进我们自己的窗口,表现就是"只有第一次能粘贴"。
+    // 检测到这种情况就显式 deactivate 一次,把激活态交给下一个应用。
+    #[cfg(target_os = "macos")]
+    if crate::appinfo::active_app_name().is_none() {
+        println!("[粘贴] 隐藏后前台仍是自己,显式让出激活态");
+        // AppKit 只允许在主线程调用,必须 dispatch 回主线程(命令跑在线程池里)
+        let handle = app.clone();
+        let _ = handle.run_on_main_thread(|| crate::appinfo::deactivate_self());
+        std::thread::sleep(Duration::from_millis(150));
+    }
+
+    // 注入前把"现在前台是谁"打出来:如果这里是我们自己(None)或空,说明焦点没让出去,
+    // 注入的快捷键会打空 —— 排查"只能粘一次"这类问题全靠这一行
+    let win = app.get_window("main");
+    println!(
+        "[粘贴] 注入前: 前台应用={:?} 主窗口可见={:?} 有焦点={:?}",
+        crate::appinfo::active_app_name(),
+        win.as_ref().and_then(|w| w.is_visible().ok()),
+        win.as_ref().and_then(|w| w.is_focused().ok()),
+    );
+
+    // 4. 注入粘贴快捷键(macOS 是 ⌘V,其余平台 Ctrl+V)
     simulate_paste()?;
-    println!("[粘贴] Ctrl+V 已发送");
+    println!("[粘贴] 粘贴快捷键已发送");
     Ok(())
 }
 
 /// 等待窗口真正隐藏(窗口请求是投递到主循环异步处理的)
 fn wait_until_hidden(app: &AppHandle, timeout: Duration) -> bool {
-    let Some(win) = app.get_window("main") else {
+    // macOS 走的是 app.hide()(NSApp hide:),它同步生效、立刻把激活态交还给上一个应用,
+    // 但窗口自身的 is_visible 标志不一定跟着翻转,轮询它只会白等超时,所以这里直接放行
+    #[cfg(target_os = "macos")]
+    {
+        let _ = (app, timeout);
         return true;
-    };
-    let deadline = Instant::now() + timeout;
-    loop {
-        if !win.is_visible().unwrap_or(false) {
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let Some(win) = app.get_window("main") else {
             return true;
+        };
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if !win.is_visible().unwrap_or(false) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
         }
-        if Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(20));
     }
 }
 
@@ -98,29 +131,44 @@ fn simulate_paste() -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let result = crate::x11::send_ctrl_v();
     #[cfg(not(target_os = "linux"))]
-    let result = simulate_ctrl_v_enigo();
+    let result = simulate_paste_enigo();
     result
 }
 
-/// macOS 预览路径:仍用 enigo(需要辅助功能权限,见 HANDOVER 已知问题)
+/// macOS 预览路径:用 enigo 发粘贴快捷键(需要辅助功能权限,见 HANDOVER 已知问题)。
+///
+/// **注意修饰键:macOS 的粘贴是 ⌘V(Command),不是 Ctrl+V**。
+/// 之前这里发的是 Ctrl+V,表现就是"权限正常、事件也确实发出去了,但目标应用毫无反应"
+/// (macOS 里 Ctrl+V 几乎没有应用绑定)。enigo 里 `Key::Meta` 在 macOS 上映射到 Command。
 #[cfg(not(target_os = "linux"))]
-fn simulate_ctrl_v_enigo() -> Result<(), String> {
+fn simulate_paste_enigo() -> Result<(), String> {
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| match e {
         enigo::NewConError::NoPermission => {
-            "无输入模拟权限:系统设置 → 隐私与安全性 → 辅助功能,授权给启动本程序的终端(或应用本体)后重启应用".to_string()
+            "无输入模拟权限:系统设置 → 隐私与安全性 → 辅助功能,授权给 KylinPaste\
+             (开发模式下是启动它的终端/IDE,而且每次重编译都可能失效),授权后重启应用"
+                .to_string()
         }
         other => format!("创建键盘模拟器失败: {other:?}"),
     })?;
 
+    let modifier = if cfg!(target_os = "macos") {
+        Key::Meta // macOS:Command
+    } else {
+        Key::Control
+    };
     // macOS 上 Key::Unicode 依赖当前键盘布局查表,中文输入法环境下可能查错键码,
     // 直接用 V 的虚拟键码 9(kVK_ANSI_V)最稳
-    let v_key = Key::Other(9);
+    let v_key = if cfg!(target_os = "macos") {
+        Key::Other(9)
+    } else {
+        Key::Unicode('v')
+    };
 
     enigo
-        .key(Key::Control, Direction::Press)
-        .map_err(|e| format!("按下 Ctrl 失败: {e:?}"))?;
+        .key(modifier, Direction::Press)
+        .map_err(|e| format!("按下修饰键失败: {e:?}"))?;
     enigo
         .key(v_key, Direction::Press)
         .map_err(|e| format!("按下 V 失败: {e:?}"))?;
@@ -131,8 +179,8 @@ fn simulate_ctrl_v_enigo() -> Result<(), String> {
         .key(v_key, Direction::Release)
         .map_err(|e| format!("释放 V 失败: {e:?}"))?;
     enigo
-        .key(Key::Control, Direction::Release)
-        .map_err(|e| format!("释放 Ctrl 失败: {e:?}"))?;
+        .key(modifier, Direction::Release)
+        .map_err(|e| format!("释放修饰键失败: {e:?}"))?;
 
     Ok(())
 }

@@ -131,6 +131,7 @@ fn capture_with(
                 created_at: 0,
                 source_app,
                 group: None,
+                favorite: false,
             }));
         }
     }
@@ -164,6 +165,7 @@ fn capture_with(
             created_at: 0,
             source_app,
             group: None,
+            favorite: false,
         }));
     }
 
@@ -193,6 +195,7 @@ fn text_record(
         created_at: 0,
         source_app,
         group: None,
+        favorite: false,
     }
 }
 
@@ -312,6 +315,7 @@ fn capture_image_file(
         created_at: 0,
         source_app,
         group: None,
+        favorite: false,
     })
 }
 

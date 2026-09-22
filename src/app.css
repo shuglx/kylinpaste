@@ -57,13 +57,14 @@ button {
 /* ---------------- 顶部:搜索 + 图钉/齿轮(这片区域可拖动窗口) ---------------- */
 
 .head {
-  padding: 14px 16px 0;
+  /* 顶部搜索行整体比原始设计大 20%(窗口默认高度同步加高) */
+  padding: 17px 16px 0;
 }
 
 .search-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
 }
 
 .search {
@@ -71,7 +72,7 @@ button {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   padding-left: 2px;
 }
 .search > svg {
@@ -86,9 +87,9 @@ button {
   outline: 0;
   background: transparent;
   font: inherit;
-  font-size: 17px;
+  font-size: 20.5px;
   color: var(--text);
-  padding: 4px 0;
+  padding: 5px 0;
 }
 .search input::placeholder {
   color: #b9bdc6;
@@ -96,8 +97,8 @@ button {
 
 .icon-btn {
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   border: 0;
   border-radius: 50%;
   background: transparent;
@@ -216,7 +217,7 @@ button {
   color: #e08a19;
 }
 
-/* 数字键 1-9 快速粘贴的提示,悬停时才露出,不干扰视觉 */
+/* Ctrl/⌘+数字键 的序号角标:只在按住修饰键时渲染出来,松开即消失 */
 .num {
   position: absolute;
   top: -4px;
@@ -230,11 +231,6 @@ button {
   font-size: 10px;
   line-height: 15px;
   text-align: center;
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-.item:hover .num {
-  opacity: 1;
 }
 
 .main {
@@ -291,9 +287,6 @@ button {
   height: 8px;
   border-radius: 50%;
   background: #d7dae0;
-}
-.dot.empty {
-  background: transparent;
 }
 .group-pill .dot {
   width: 7px;
@@ -407,8 +400,8 @@ button {
 .menu {
   position: fixed;
   z-index: 40;
-  /* 固定宽度:按钮上算好的贴右偏移才对得上 */
-  width: 176px;
+  /* 固定宽度:按钮上算好的贴右偏移才对得上(分组菜单是 152,设置页下拉会内联覆盖) */
+  width: 152px;
   max-height: 260px;
   overflow-y: auto;
   padding: 4px;
@@ -437,6 +430,10 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* "不筛选"这类没有颜色点的项:文字居中 */
+.menu-item.center {
+  justify-content: center;
 }
 .menu-item:hover {
   background: var(--hover);
@@ -569,4 +566,259 @@ button {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+}
+
+/* ---------------- 设置界面(左页签 + 右内容卡片) ---------------- */
+
+.settings {
+  display: flex;
+  height: 100%;
+}
+
+.side {
+  flex: 0 0 auto;
+  width: 152px;
+  padding: 14px 10px;
+  background: #f7f7f9;
+  border-right: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.side-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #4b5057;
+  font-size: 13.5px;
+  text-align: left;
+}
+.side-item svg {
+  flex: 0 0 auto;
+  color: #7d838c;
+}
+.side-item:hover {
+  background: #eceef1;
+}
+.side-item.on,
+.side-item.on svg {
+  background: var(--accent);
+  color: #fff;
+}
+.side-item.on svg {
+  background: transparent;
+}
+
+.pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 9px 12px 4px;
+}
+.pane-head h1 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.pane-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 18px;
+}
+.pane-body::-webkit-scrollbar {
+  width: 8px;
+}
+.pane-body::-webkit-scrollbar-thumb {
+  background: #d9dbe0;
+  border-radius: 4px;
+}
+
+.group-title {
+  margin: 14px 0 7px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.card {
+  border-radius: 12px;
+  background: #f7f7f9;
+  overflow: hidden;
+}
+
+.row-block + .row-block {
+  border-top: 1px solid #eceef1;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  text-align: left;
+}
+.row-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* 说明按钮:点一下才展开说明文字(悬停不弹原生提示、光标也保持普通指针) */
+.hint-btn {
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #e6e7eb;
+  color: #8b8f98;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.hint-btn:hover {
+  background: #dcdee3;
+}
+.hint-btn.on {
+  background: var(--accent);
+  color: #fff;
+}
+.row-note {
+  padding: 0 14px 9px;
+  margin-top: -3px;
+  color: var(--muted-2);
+  font-size: 11.5px;
+  line-height: 1.6;
+  /* 说明里的 \n 要真的换行(如"最大条目数"那条分两句) */
+  white-space: pre-line;
+}
+.row-ctrl {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+button.row:hover {
+  background: #f0f1f4;
+}
+.link-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent);
+  font-size: 12.5px;
+}
+
+/* 开关 */
+.switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: #d7dae0;
+  transition: background 0.15s;
+}
+.switch i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+  transition: transform 0.15s;
+}
+.switch.on {
+  background: var(--accent);
+}
+.switch.on i {
+  transform: translateX(18px);
+}
+
+/* 下拉选择 */
+.select {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.select:hover {
+  background: #eceef1;
+  color: var(--text);
+}
+.select svg {
+  color: var(--muted-2);
+}
+
+/* 快捷键录入 */
+.hotkey-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+.hotkey {
+  padding: 4px 10px;
+  border: 1px solid #e2e4e8;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.hotkey:hover {
+  border-color: #cdd2da;
+}
+.hotkey.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.hotkey-error {
+  color: #e0433f;
+  font-size: 11.5px;
+}
+
+/* 关于页 */
+.about-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+}
+.about-logo {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: 11px;
+}
+.about-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.about-version {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12.5px;
 }

@@ -27,6 +27,19 @@ mod platform {
     use objc::{class, msg_send, sel, sel_impl};
     use std::ffi::CStr;
 
+    /// 显式放弃激活态,把"最前应用"交给窗口列表里的下一个应用。
+    ///
+    /// `app.hide()`(NSApp hide:)一般会把激活态让出去,但实测出现过"窗口隐藏了、
+    /// 我们仍是最前应用"的情况,这时注入的 ⌘V 会打进自己的窗口(表现为"只有第一次能粘贴")。
+    pub fn deactivate_self() {
+        unsafe {
+            let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+            if !app.is_null() {
+                let _: () = msg_send![app, deactivate];
+            }
+        }
+    }
+
     /// 把 NSString 转成 Rust String(id 为空时返回 None)
     unsafe fn nsstring_to_string(ns: *mut Object) -> Option<String> {
         if ns.is_null() {
@@ -69,6 +82,13 @@ mod platform {
     pub fn frontmost_app_name() -> Option<String> {
         crate::x11::active_app_name()
     }
+}
+
+/// 放弃激活态:macOS 上显式 `NSApp deactivate`,把激活态交给下一个应用。
+/// X11 由窗口管理器负责,不需要这个动作,所以只在 mac 上提供。
+#[cfg(target_os = "macos")]
+pub fn deactivate_self() {
+    platform::deactivate_self();
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]

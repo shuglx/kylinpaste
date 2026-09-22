@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "KylinPaste",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "tauri": {
     "macOSPrivateApi": true,
@@ -16,6 +16,9 @@
       "all": false,
       "window": {
         "startDragging": true
+      },
+      "shell": {
+        "open": true
       },
       "protocol": {
         "asset": true,
@@ -27,9 +30,9 @@
         "label": "main",
         "title": "KylinPaste 剪贴板",
         "width": 720,
-        "height": 470,
+        "height": 480,
         "minWidth": 520,
-        "minHeight": 340,
+        "minHeight": 350,
         "resizable": true,
         "center": true,
         "visible": true,
@@ -39,9 +42,6 @@
     ],
     "security": {
       "csp": null
-    },
-    "systemTray": {
-      "iconPath": "icons/tray.png"
     },
     "bundle": {
       "identifier": "com.kylinpaste.app",
@@ -58,7 +58,6 @@
         "depends": [
           "libwebkit2gtk-4.0-37",
           "libgtk-3-0",
-          "libappindicator3-1",
           "libxkbcommon0"
         ]
       }
