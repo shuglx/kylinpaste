@@ -16,7 +16,10 @@ jobs:
   build-deb:
     runs-on: ubuntu-24.04-arm
     steps:
+      # fetch-depth: 0 —— 生成 Release 说明时要读标签说明和上一个标签(compare 链接)
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -64,13 +67,28 @@ jobs:
           name: kylinpaste-arm64-deb
           path: dist-deb/*.deb
 
+      # Release 说明 = 标签说明(打 tag 时写的 -m 内容) + Full Changelog 链接
+      - name: 生成 Release 说明
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          {
+            git tag -l --format='%(contents)' "$GITHUB_REF_NAME"
+            prev=$(git describe --tags --abbrev=0 "$GITHUB_REF_NAME^" 2>/dev/null || true)
+            if [ -n "$prev" ]; then
+              printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+                "$GITHUB_REPOSITORY" "$prev" "$GITHUB_REF_NAME"
+            fi
+          } > release-notes.md
+          echo "----- Release 说明 -----"
+          cat release-notes.md
+
       # 打 tag(v*)时创建 GitHub Release 并附上 deb
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: dist-deb/*.deb
-          generate_release_notes: true
+          body_path: release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
