@@ -568,7 +568,7 @@ export default function App() {
       return;
     }
     const r = e.currentTarget.getBoundingClientRect();
-    const width = 152; // 与 app.css 的 .menu 宽度一致
+    const width = 132; // 与 app.css 的 .menu 宽度一致
     setTagPop(null);
     setMenuPos({
       top: r.bottom + 8,
