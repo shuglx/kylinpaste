@@ -115,4 +115,4 @@ src-tauri/src/              后端(Rust)
 
 ## 许可
 
-暂未指定开源协议。
+[MIT](LICENSE)

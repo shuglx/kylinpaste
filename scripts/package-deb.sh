@@ -54,6 +54,7 @@ Version: ${VERSION}
 Section: utils
 Priority: optional
 Architecture: ${ARCH}
+License: MIT
 Depends: libwebkit2gtk-4.0-37, libgtk-3-0, libxkbcommon0
 Maintainer: ryan <ryan@localhost>
 Description: KylinPaste clipboard history manager for Kylin V10 (arm64)
