@@ -172,6 +172,14 @@ fn cmd_set_always_on_top(app: tauri::AppHandle, enabled: bool) -> Result<bool, S
         klog!("[窗口] 置顶设置失败: {e}");
         return Err(e.to_string());
     }
+    // Linux 再向窗口管理器直接发一遍 EWMH:GTK 的 keep_above 在 UKUI 等桌面
+    // 上不一定被理会,置顶不生效的表现就是"点了别处窗口就被压到后面"
+    #[cfg(target_os = "linux")]
+    {
+        let via_ewmh = x11::set_above(enabled);
+        klog!("[窗口] 置顶={enabled}(GTK ✓,EWMH 请求={via_ewmh})");
+    }
+    #[cfg(not(target_os = "linux"))]
     klog!("[窗口] 置顶={enabled}");
     Ok(enabled)
 }
@@ -257,31 +265,53 @@ pub fn show_main(app: &tauri::AppHandle) {
     }
     WINDOW_VISIBLE.store(true, Ordering::SeqCst);
 
-    // show() 只是投递一个窗口请求,而 tao 的 set_focus() 会检查"窗口当前是否可见",
-    // 紧跟着调用时窗口还没映射,聚焦请求会被直接丢弃:窗口虽然被映射出来,
-    // 却拿不到焦点(还可能压在别的窗口后面),用户得再按一次热键才"真的出来"。
-    //
-    // 这里用"自己记的可见状态 + 稍等再聚焦"代替原来的 is_visible() 轮询:
-    // 那个轮询是工作线程直接读 GTK,麒麟上会崩。窗口请求统一走
-    // run_on_main_thread,确保 GTK 调用发生在主线程。
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        // 先给窗口管理器一点时间把窗口映射出来
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        for _ in 0..8 {
-            if window_focused() || !window_visible() {
-                return;
-            }
-            let focus_handle = handle.clone();
-            let _ = handle.run_on_main_thread(move || {
-                if let Some(win) = focus_handle.get_window("main") {
-                    let _ = win.set_focus();
+    #[cfg(target_os = "linux")]
+    {
+        // UKUI 等桌面对 tao/GTK 的 set_focus 有"防抢焦点"式忽略:窗口已经映射时
+        // set_focus 是空操作,表现就是"窗口在跑但按热键呼不到最前"。
+        // 所以等窗口进入 _NET_CLIENT_LIST 后,直接发 EWMH 激活(source=2 可绕过限制),
+        // 由 activate_window 内部兜底 XSetInputFocus。
+        std::thread::spawn(move || {
+            for _ in 0..10 {
+                std::thread::sleep(std::time::Duration::from_millis(80));
+                if !window_visible() {
+                    return;
                 }
-            });
+                if let Some(xid) = x11::main_window_xid() {
+                    if x11::activate_window(xid) {
+                        klog!("[窗口] 已通过 EWMH 前置并聚焦主窗口");
+                        return;
+                    }
+                }
+            }
+            klog!("[窗口] EWMH 前置主窗口未成功(桌面可能未响应激活请求)");
+        });
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // show() 只是投递一个窗口请求,而 tao 的 set_focus() 会检查"窗口当前是否可见",
+        // 紧跟着调用时窗口还没映射,聚焦请求会被直接丢弃:窗口虽然被映射出来,
+        // 却拿不到焦点(还可能压在别的窗口后面),用户得再按一次热键才"真的出来"。
+        // 这里用"自己记的可见状态 + 稍等再聚焦"代替轮询 is_visible()(工作线程读 GTK 会崩)。
+        let handle = app.clone();
+        std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(60));
-        }
-        klog!("[窗口] 等待窗口获得焦点超时,未能补发聚焦请求");
-    });
+            for _ in 0..8 {
+                if window_focused() || !window_visible() {
+                    return;
+                }
+                let focus_handle = handle.clone();
+                let _ = handle.run_on_main_thread(move || {
+                    if let Some(win) = focus_handle.get_window("main") {
+                        let _ = win.set_focus();
+                    }
+                });
+                std::thread::sleep(std::time::Duration::from_millis(60));
+            }
+            klog!("[窗口] 等待窗口获得焦点超时,未能补发聚焦请求");
+        });
+    }
 }
 
 /// 显示/隐藏主窗口
@@ -294,17 +324,19 @@ pub fn toggle_main_window(app: &tauri::AppHandle) {
     }
     LAST_TOGGLE_MS.store(now, Ordering::SeqCst);
 
-    // 只用镜像状态:本函数跑在热键监听线程上,不能碰 GTK
     let visible = window_visible();
+    // Linux:活动窗口以 X11 的 _NET_ACTIVE_WINDOW 为准 —— 镜像的焦点状态依赖 GTK
+    // 的 Focused 事件,UKUI 这类桌面收不到,会让切换走错分支(该前置时什么都不做)。
+    // 可见但不是活动窗口 → 前置并聚焦;是活动窗口 → 隐藏;不可见 → 显示。
+    #[cfg(target_os = "linux")]
+    let focused = x11::main_window_is_active();
+    #[cfg(not(target_os = "linux"))]
     let focused = window_focused();
-    // 可见且持有焦点 → 隐藏;
-    // 可见但失焦(被遮挡/应用在后台)→ 前置并聚焦(避免"按一次没反应"的错觉);
-    // 隐藏 → 显示
     if visible && focused {
-        klog!("[窗口] 热键切换: 可见={visible} 有焦点={focused} → 隐藏");
+        klog!("[窗口] 热键切换: 可见={visible} 是活动窗口={focused} → 隐藏");
         hide_main(app);
     } else {
-        klog!("[窗口] 热键切换: 可见={visible} 有焦点={focused} → 显示并聚焦");
+        klog!("[窗口] 热键切换: 可见={visible} 是活动窗口={focused} → 显示并前置");
         show_main(app);
     }
 }

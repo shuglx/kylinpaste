@@ -127,6 +127,93 @@ pub fn focus_left_app() -> bool {
     }
 }
 
+/// 读取根窗口的 _NET_CLIENT_LIST(EWMH 维护的"受管理窗口列表")
+fn client_list(conn: &RustConnection, root: Window) -> Vec<Window> {
+    let Ok(atom) = intern_atom(conn, b"_NET_CLIENT_LIST") else {
+        return Vec::new();
+    };
+    let Some(reply) = conn
+        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 256)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+    else {
+        return Vec::new();
+    };
+    reply.value32().map(|it| it.collect()).unwrap_or_default()
+}
+
+/// 找本应用主窗口的 X11 窗口 id。
+///
+/// 呼出/置顶都要走 EWMH:UKUI 这类桌面对 GTK 层的 set_focus / keep_above
+/// 常有"防抢焦点"式的忽略,窗口明明在跑就是呼不到最前、置顶也不生效。
+/// 按 `_NET_WM_PID + WM_CLASS` 匹配;class 读不到时退回只比 pid。
+pub fn main_window_xid() -> Option<Window> {
+    let (conn, root) = connect().ok()?;
+    let me = std::process::id();
+    client_list(&conn, root).into_iter().find(|&win| {
+        window_pid(&conn, win) == Some(me)
+            && window_class(&conn, win)
+                .map(|class| class.to_ascii_lowercase().contains("kylinpaste"))
+                .unwrap_or(true)
+    })
+}
+
+/// 本应用主窗口当前是否就是"活动窗口"。
+///
+/// 直接问 X11,不依赖 GTK 的 Focused 事件 —— 镜像状态在部分桌面上收不到
+/// 焦点变化事件,会让热键切换走错分支(该前置时却什么也不做)。
+pub fn main_window_is_active() -> bool {
+    let Ok((conn, root)) = connect() else {
+        return false;
+    };
+    match active_window(&conn, root) {
+        Some(win) => window_pid(&conn, win) == Some(std::process::id()),
+        None => false,
+    }
+}
+
+/// 请求窗口管理器把主窗口设为/取消"总在最前"(EWMH `_NET_WM_STATE` 消息)。
+///
+/// 与 GTK 的 set_always_on_top 并行使用:GTK 在部分 WM 上不生效,自己发一遍
+/// `_NET_WM_STATE_ABOVE` 最稳(与 `activate_window` 同样的 SUBSTRUCTURE_REDIRECT 约定)。
+pub fn set_above(enabled: bool) -> bool {
+    let Some(win) = main_window_xid() else {
+        return false;
+    };
+    let (conn, root) = match connect() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    let (Ok(state), Ok(above)) = (
+        intern_atom(&conn, b"_NET_WM_STATE"),
+        intern_atom(&conn, b"_NET_WM_STATE_ABOVE"),
+    ) else {
+        return false;
+    };
+    // data.l[0]: 1=添加属性 / 0=移除;l[1]=要改的属性
+    let event = ClientMessageEvent::new(
+        32,
+        win,
+        state,
+        [u32::from(enabled), above, 0, 0, 0],
+    );
+    let sent = conn
+        .send_event(
+            false,
+            root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event,
+        )
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
+    if let Err(e) = sent {
+        crate::klog!("[窗口] 发送 _NET_WM_STATE_ABOVE 失败: {e}");
+        return false;
+    }
+    let _ = conn.flush();
+    true
+}
+
 // ---------------------------------------------------------------- 目标窗口
 
 /// 把"当前活动窗口"记为粘贴时的焦点归还目标。
