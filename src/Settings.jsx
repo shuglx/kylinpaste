@@ -299,10 +299,10 @@ export default function Settings({
     }
   };
 
-  const copyLogPath = () => {
-    invoke('cmd_copy_log_path')
-      .then(() => flash(t.pathCopied))
-      .catch((e) => fail(String(e)));
+  /** 打开日志文件(和存储页的文件同一套白名单机制) */
+  const openLogFile = () => {
+    if (!logPath) return;
+    invoke('cmd_open_path', { path: logPath }).catch((e) => fail(t.openPathFailed(e)));
   };
 
   const toggleAutostart = (next) => {
@@ -489,7 +489,7 @@ export default function Settings({
                     <IconExternalLink />
                   </span>
                 </Row>
-                <Row label={`${t.logFile}（${t.copyPath}）`} onClick={copyLogPath}>
+                <Row label={t.logFile} onClick={openLogFile}>
                   <span
                     className="link-value log-path"
                     title={logPath || ''}

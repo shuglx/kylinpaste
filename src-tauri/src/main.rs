@@ -14,8 +14,6 @@ mod x11;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tauri::{Manager, WindowEvent};
 
-// cmd_copy_log_path 里要调 ClipboardContext::set_text(方法来自这个 trait)
-use clipboard_rs::Clipboard;
 
 /// 连续两次切换的最小间隔(毫秒):多个热键来源或键盘重复时不至于"闪一下又消失"
 const TOGGLE_DEBOUNCE_MS: u64 = 250;
@@ -137,7 +135,6 @@ fn main() {
             cmd_quit_app,
             cmd_log,
             cmd_get_log_path,
-            cmd_copy_log_path,
             cmd_get_storage_files,
             cmd_open_path,
             cmd_get_hotkey_status,
@@ -228,18 +225,6 @@ fn cmd_get_log_path() -> Option<String> {
     logfile::path().map(|p| p.to_string_lossy().into_owned())
 }
 
-/// 把日志文件路径写进剪贴板(界面上的"复制路径"按钮;webview 里的
-/// navigator.clipboard 不可靠,走内核的剪贴板写入)
-#[tauri::command]
-fn cmd_copy_log_path() -> Result<String, String> {
-    let path = logfile::path().ok_or("日志还没初始化")?;
-    let text = path.to_string_lossy().into_owned();
-    clipboard_service::with_writer(|ctx| {
-        ctx.set_text(text.clone()).map_err(|e| format!("写入剪贴板失败: {e}"))
-    })?;
-    Ok(text)
-}
-
 /// "存储"页展示的文件
 #[derive(serde::Serialize)]
 struct StorageFile {
@@ -269,10 +254,11 @@ fn cmd_get_storage_files() -> Vec<StorageFile> {
 
 /// 用系统默认程序打开"存储"页里的文件。
 ///
-/// 只放行 `cmd_get_storage_files` 返回的那几个路径——不给前端一个任意路径启动器。
+/// 只放行应用自己的存储文件与日志文件——不给前端一个任意路径启动器。
 #[tauri::command]
 fn cmd_open_path(path: String) -> Result<(), String> {
-    let allowed = cmd_get_storage_files().iter().any(|f| f.path == path);
+    let allowed = cmd_get_storage_files().iter().any(|f| f.path == path)
+        || logfile::path().map(|p| p.to_string_lossy() == path).unwrap_or(false);
     if !allowed {
         return Err("只允许打开应用自己的存储文件".into());
     }

@@ -101,8 +101,6 @@ const zh = {
     '当前是 Wayland 会话：X11 全局热键对原生 Wayland 窗口不生效，建议改用 X11（Xorg）会话登录。',
   logFile: '日志文件',
   logFileTip: '排查问题时把这个文件拷给开发者',
-  copyPath: '复制路径',
-  pathCopied: '路径已复制',
   maxItems: '最大条目数',
   maxItemsHint:
     '仅限制未收藏、未分组的临时记录数，收藏与分组的记录独立存储、不会被统一清理。',
@@ -209,8 +207,6 @@ const en = {
     'This is a Wayland session: X11 global shortcuts do not fire for native Wayland windows. Log in with an X11 (Xorg) session instead.',
   logFile: 'Log file',
   logFileTip: 'Send this file when reporting a problem',
-  copyPath: 'Copy path',
-  pathCopied: 'Path copied',
   maxItems: 'Max records',
   maxItemsHint:
     'Limits temporary records that are neither starred nor grouped; starred and grouped records are stored separately and are never cleared in bulk.',
