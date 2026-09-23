@@ -146,8 +146,7 @@ button:focus,
 /* ---------------- 顶部:搜索 + 图钉/齿轮(这片区域可拖动窗口) ---------------- */
 
 .head {
-  /* 顶部搜索行整体比原始设计大 20%(窗口默认高度同步加高) */
-  padding: 17px 16px 0;
+  padding: 12px 16px 0;
 }
 
 .search-row {
@@ -165,8 +164,10 @@ button:focus,
   padding-left: 2px;
 }
 
-.search > svg { margin-right: 12px; }
 .search > svg {
+  width: 16px;
+  height: 16px;
+  margin-right: 8px;
   color: var(--icon-dim);
   flex: 0 0 auto;
 }
@@ -178,9 +179,9 @@ button:focus,
   outline: 0;
   background: transparent;
   font: inherit;
-  font-size: 20.5px;
+  font-size: 15px;
   color: var(--text);
-  padding: 5px 0;
+  padding: 3px 0;
 }
 .search input::placeholder {
   color: var(--icon-dim);
@@ -188,14 +189,14 @@ button:focus,
 
 .icon-btn {
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
+  width: 31px;
+  height: 31px;
   border: 0;
   border-radius: 50%;
   background: transparent;
   color: var(--icon-dim);
   padding: 0;
-  line-height: 36px;
+  line-height: 31px;
   text-align: center;
   font-size: 0;
 }
