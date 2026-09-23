@@ -646,7 +646,9 @@ export default function App() {
     };
     list.addEventListener('wheel', onWheel, { passive: false });
     return () => list.removeEventListener('wheel', onWheel);
-  }, []);
+    // 依赖 view:设置页是提前 return,列表会被卸载;回到列表时必须重新挂监听,
+    // 否则进过一次设置页后滚轮选记录就失效了
+  }, [view]);
 
   // 搜索条件变化:选中项回到第一条
   useEffect(() => {
