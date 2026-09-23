@@ -117,6 +117,14 @@ fn main() {
                 );
             }
 
+            // Linux:窗口外扩一圈透明边距(网页内自绘阴影),内容区大小不变
+            #[cfg(target_os = "linux")]
+            if let Some(win) = app.get_window("main") {
+                use tauri::LogicalSize;
+                let _ = win.set_size(LogicalSize::new(776.0, 536.0));
+                let _ = win.set_min_size(Some(LogicalSize::new(576.0, 406.0)));
+            }
+
             // 防御性确保主窗口可见(顺带补一次聚焦,首启时用户可以直接输入/按数字键)
             let handle = app.handle();
             show_main(&handle);

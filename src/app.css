@@ -35,6 +35,18 @@ body {
   background: transparent;
 }
 
+/* Linux:窗口比界面大一圈(透明边距),在这里自绘外阴影 —— UKUI 等桌面的合成器
+   不给透明无装饰窗口画阴影,mac 有系统阴影所以不加 */
+body.platform-linux {
+  padding: 28px;
+}
+body.platform-linux .app {
+  box-shadow:
+    0 5px 24px rgba(0, 0, 0, 0.32),
+    0 1px 4px rgba(0, 0, 0, 0.18);
+}
+}
+
 body {
   font-family: -apple-system, 'Noto Sans CJK SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   font-size: 13px;
