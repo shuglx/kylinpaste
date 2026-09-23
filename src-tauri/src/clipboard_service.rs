@@ -157,7 +157,7 @@ fn capture_with(
             id: 0,
             kind: "image".into(),
             // 剪贴板里的图像数据(截图工具输出的就是这种):标题标明是截图并带上尺寸
-            text: Some(format!("截图「{w} × {h}」")),
+            text: Some(format!("截图「{w}px × {h}px」")),
             html: None,
             files: None,
             image_path: Some(rel_path),
