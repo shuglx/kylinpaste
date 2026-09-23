@@ -467,9 +467,9 @@ export default function App() {
       if (pending) pending();
     };
     const onKeyUp = (event) => {
-      if (!event.metaKey) finish();
+      if (!event.altKey) finish();
     };
-    // 兜底:万一 ⌘ 的 keyUp 没落到我们这(比如先点了别的应用),窗口失焦时也执行掉
+    // 兜底:万一 ⌥ 的 keyUp 没落到我们这(比如先点了别的应用),窗口失焦时也执行掉
     window.addEventListener('keyup', onKeyUp, true);
     window.addEventListener('blur', finish);
   };
@@ -507,14 +507,17 @@ export default function App() {
         return;
       }
 
-      // 快捷粘贴:Ctrl(mac 上是 ⌘)+ 数字键 1-9(此时角标也是亮的)
-      const mod = IS_MAC ? e.metaKey : e.ctrlKey;
+      // 快捷粘贴:Alt(mac 上是 ⌥ Option)+ 数字键 1-9(此时角标也是亮的)。
+      // 最早用 Ctrl+数字,麒麟上与部分应用/输入法冲突(Ctrl+5 固定失败);
+      // 数字从 e.code 解析:mac 的 Option+数字 e.key 是 ¡™ 这类符号
+      const mod = e.altKey;
       if (mod) {
-        if (e.altKey || e.shiftKey) return;
+        if (e.ctrlKey || e.metaKey || e.shiftKey) return;
         // 自动重复防护:一次按下只粘一次(否则多条粘贴链路并发,注入变裸 v)
         if (e.repeat) return;
-        const n = parseInt(e.key, 10);
-        if (n >= 1 && n <= 9) {
+        const digit = /^(?:Digit|Numpad)([1-9])$/.exec(e.code);
+        if (digit) {
+          const n = Number(digit[1]);
           e.preventDefault();
           if (!quickPasteRef.current) return;
           const rec = visibleRef.current[n - 1];
@@ -538,30 +541,29 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  // 按住 Ctrl(⌘)时亮出数字角标,松开就收起;同时用它决定快捷键是否生效
+  // 按住 Alt(⌥)时亮出数字角标,松开就收起;同时用它决定快捷键是否生效
   useEffect(() => {
-    const MODIFIER_KEY = IS_MAC ? 'Meta' : 'Control';
+    const MODIFIER_KEY = 'Alt';
     // 修饰键"自己"的事件:老版 WebKitGTK(麒麟)在这类事件里给出的
     // e.ctrlKey/e.metaKey 可能是错的(按下时是 false),不能只信事件标志
     const isSelf = (e) =>
       e.key === MODIFIER_KEY ||
       e.code === `${MODIFIER_KEY}Left` ||
       e.code === `${MODIFIER_KEY}Right` ||
-      e.keyCode === (IS_MAC ? 91 : 17) ||
-      (IS_MAC && e.keyCode === 93);
+      e.keyCode === 18;
     const onDown = (e) => {
       if (isSelf(e)) {
         setModDown(true);
         return;
       }
-      setModDown(IS_MAC ? e.metaKey : e.ctrlKey);
+      setModDown(e.altKey);
     };
     const onUp = (e) => {
       if (isSelf(e)) {
         setModDown(false);
         return;
       }
-      setModDown(IS_MAC ? e.metaKey : e.ctrlKey);
+      setModDown(e.altKey);
     };
     const reset = () => setModDown(false);
     window.addEventListener('keydown', onDown);
@@ -586,6 +588,8 @@ export default function App() {
     const unlistenSummon = listen('window-summoned', () => {
       setView('list');
       setSelIdx(0);
+      // 列表滚动位置也回到顶部(隐藏前可能滚到了下面)
+      listRef.current?.scrollTo(0, 0);
     });
     return () => {
       unlisten.then((f) => f());
@@ -755,7 +759,7 @@ export default function App() {
               title={t.pasteHint}
             >
               <Thumb rec={rec} assets={assets}>
-                {/* 角标只在按住 Ctrl/⌘ 时出现(不给悬停显示,避免误以为数字键直接可用) */}
+                {/* 角标只在按住 Alt/⌥ 时出现(不给悬停显示,避免误以为数字键直接可用) */}
                 {modDown && quickPaste && idx < 9 && <span className="num">{idx + 1}</span>}
               </Thumb>
               <div className="main">
