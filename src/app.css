@@ -276,6 +276,12 @@ button:focus,
   font-size: 14.5px;
   font-weight: 600;
   color: var(--text);
+}
+/* 文件路径/截图尺寸这类「辅助信息」用灰色弱化 */
+.title .title-aux {
+  font-weight: 500;
+  color: var(--muted);
+}
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

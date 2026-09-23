@@ -735,6 +735,10 @@ export default function App() {
 
         {visible.slice(0, 200).map((rec, idx) => {
           const { title, sub } = rowText(rec, t);
+          // 图片/文件的标题尾部带「路径/尺寸」辅助信息,拆出来用灰色弱化
+          const titleAux = /^(.*?)「([^」]*)」$/.exec(
+            rec.kind === 'image' || rec.kind === 'files' ? title : ''
+          );
           const fav = Boolean(rec.favorite);
           return (
             <div
@@ -749,7 +753,16 @@ export default function App() {
                 {modDown && quickPaste && idx < 9 && <span className="num">{idx + 1}</span>}
               </Thumb>
               <div className="main">
-                <div className="title">{title}</div>
+                <div className="title">
+                  {titleAux ? (
+                    <>
+                      {titleAux[1]}
+                      <span className="title-aux">「{titleAux[2]}」</span>
+                    </>
+                  ) : (
+                    title
+                  )}
+                </div>
                 <div className="sub">
                   <span className="sub-text">{sub}</span>
                   {rec.group && (
