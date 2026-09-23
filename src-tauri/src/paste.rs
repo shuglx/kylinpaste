@@ -245,8 +245,17 @@ fn simulate_paste_enigo() -> Result<(), String> {
 fn write_clipboard(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
     // 复用一个常驻的写上下文:每次新建都会多一条 X 连接 + 一个常驻线程
     clipboard_service::with_writer(|ctx| match rec.kind.as_str() {
+        // 旧版本存储的文件条目是 file:// + 百分号编码的 URI,归一化为本地路径:
+        // set_files 写出的 text/plain 才是真实路径(OA 类应用据此弹上传框)
         "files" => ctx
-            .set_files(rec.files.clone().unwrap_or_default())
+            .set_files(
+                rec.files
+                    .clone()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|f| clipboard_service::normalize_file_entry(f))
+                    .collect(),
+            )
             .map_err(|e| format!("写入文件列表失败: {e}")),
         "image" => {
             let img = crate::clipboard_service::load_image(
@@ -259,7 +268,9 @@ fn write_clipboard(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String>
                 Some(files) => ctx
                     .set(vec![
                         ClipboardContent::Image(img),
-                        ClipboardContent::Files(files.to_vec()),
+                        ClipboardContent::Files(
+                            files.iter().map(|f| clipboard_service::normalize_file_entry(f)).collect(),
+                        ),
                     ])
                     .map_err(|e| format!("写入图片与文件失败: {e}")),
                 None => ctx.set_image(img).map_err(|e| format!("写入图片失败: {e}")),
