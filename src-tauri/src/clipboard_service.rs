@@ -110,6 +110,7 @@ fn capture_with(
 
     // 优先级:文件 > 文字/富文本(仅当富文本里确实有文字)> 图片 > 纯文本
     if let Ok(files) = ctx.get_files() {
+        let files: Vec<String> = files.iter().map(|f| normalize_file_entry(f)).collect();
         if !files.is_empty() {
             // 只复制了一个图片文件 → 按图片处理(展示缩略图、归入"图片"分类,标题用文件名),
             // 同时保留原始文件路径,粘贴时会把图片和文件列表一起写进剪贴板
@@ -175,6 +176,39 @@ fn capture_with(
     Ok(Some(text_record(html, text, source_app)))
 }
 
+/// Linux 剪贴板里的文件条目是 `file://` + 百分号编码的 URI(文件管理器写入),
+/// 统一还原成本地路径存储与粘贴:set_files 会自动补 file:// 前缀,
+/// 而 text/plain 目标必须与文件管理器一致地写**解码后的真实路径**——
+/// 有 OA 类应用靠"text/plain 是否为存在的文件路径"来决定弹上传框还是当文本粘。
+#[allow(dead_code)] // mac 上捕获/粘贴都是原生路径,此函数仅 Linux 链路使用
+pub(crate) fn normalize_file_entry(entry: &str) -> String {
+    let rest = entry.strip_prefix("file://").unwrap_or(entry);
+    if !rest.contains('%') {
+        return rest.to_string();
+    }
+    let bytes = rest.as_bytes();
+    let hex = |c: u8| match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    };
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h), Some(l)) = (hex(bytes[i + 1]), hex(bytes[i + 2])) {
+                out.push(h * 16 + l);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// 组装一条文字/富文本记录:文本给标题,富文本留着粘贴成带格式的内容
 fn text_record(
     html: Option<String>,
@@ -235,6 +269,19 @@ mod tests {
         assert!(html_has_visible_text("<p class=MsoNormal>你好 world</p>"));
         assert!(html_has_visible_text("<table><tr><td>42</td></tr></table>"));
         assert!(html_has_visible_text("没有标签的纯文本片段"));
+    }
+
+    /// 文件条目归一化:file:// 前缀与百分号编码还原为本地路径(含中文/空格)
+    #[test]
+    fn file_entries_are_normalized_to_paths() {
+        use super::normalize_file_entry;
+        assert_eq!(
+            normalize_file_entry("file:///home/u/%E6%96%87%E4%BB%B6.txt"),
+            "/home/u/文件.txt"
+        );
+        assert_eq!(normalize_file_entry("file:///tmp/a%20b.png"), "/tmp/a b.png");
+        assert_eq!(normalize_file_entry("file:///tmp/plain.txt"), "/tmp/plain.txt");
+        assert_eq!(normalize_file_entry("/tmp/no-prefix.txt"), "/tmp/no-prefix.txt");
     }
 
     /// 超长富文本退化为纯文本记录(被截断的 html 粘进 WPS 会失败)
