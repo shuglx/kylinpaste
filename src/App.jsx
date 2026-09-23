@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
   max_items: 500,
   language: 'zh',
   quick_paste: true,
+  opacity: 92,
 };
 
 /** 分组配色:mac 标签那 7 个颜色(从截图上取样得到),循环使用。
@@ -189,6 +190,15 @@ export default function App() {
   const inputRef = useRef(null);
   const t = useMemo(() => translations((settings || DEFAULT_SETTINGS).language), [settings]);
   const quickPaste = (settings || DEFAULT_SETTINGS).quick_paste;
+
+  // 窗口底色不透明度(设置-常规-外观):改写根节点的 --bg 变量,CSS 里的值只是缺省
+  useEffect(() => {
+    const opacity = (settings || DEFAULT_SETTINGS).opacity;
+    document.documentElement.style.setProperty(
+      '--bg',
+      `rgba(255, 255, 255, ${Math.min(100, Math.max(50, opacity || 92)) / 100})`
+    );
+  }, [settings]);
 
   // 初始加载(含旧版 localStorage 收藏的一次性迁移)+ 订阅剪贴板更新事件
   useEffect(() => {

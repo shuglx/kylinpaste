@@ -250,6 +250,19 @@ export default function Settings({
   const [notice, setNotice] = useState(null);
   const [hotkeyStatus, setHotkeyStatus] = useState(null);
   const [logPath, setLogPath] = useState(null);
+
+  // 透明度滑条:拖动时立即预览(直接改 CSS 变量),松手/键盘停顿后才落盘
+  const [opacity, setOpacity] = useState((settings && settings.opacity) || 92);
+  useEffect(() => {
+    setOpacity((settings && settings.opacity) || 92);
+  }, [settings && settings.opacity]);
+  const previewOpacity = (value) => {
+    setOpacity(value);
+    document.documentElement.style.setProperty(
+      '--bg',
+      `rgba(255, 255, 255, ${value / 100})`
+    );
+  };
   const [storageFiles, setStorageFiles] = useState([]);
 
   useEffect(() => {
@@ -397,6 +410,25 @@ export default function Settings({
                 {hotkeyStatus && hotkeyStatus.ok && hotkeyStatus.wayland && (
                   <div className="hotkey-warn soft">{t.hotkeyWayland}</div>
                 )}
+              </div>
+
+              <div className="group-title">{t.sectionAppearance}</div>
+              <div className="card">
+                <Row label={t.opacity}>
+                  <div className="opacity-row">
+                    <input
+                      type="range"
+                      min="50"
+                      max="100"
+                      step="1"
+                      value={opacity}
+                      onChange={(e) => previewOpacity(Number(e.target.value))}
+                      onPointerUp={() => commit({ opacity })}
+                      onKeyUp={() => commit({ opacity })}
+                    />
+                    <span>{opacity}%</span>
+                  </div>
+                </Row>
               </div>
 
               <div className="group-title">{t.sectionI18n}</div>

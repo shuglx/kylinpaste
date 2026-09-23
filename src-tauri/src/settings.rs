@@ -17,6 +17,9 @@ const FILE: &str = "settings.json";
 /// 保留条数的允许区间(界面给的是 300/500/1000,这里放宽一些)
 const MIN_ITEMS: usize = 100;
 const MAX_ITEMS: usize = 10_000;
+/// 窗口底色不透明度的允许区间(百分比,界面滑条 50%-100%)
+const MIN_OPACITY: u8 = 50;
+const MAX_OPACITY: u8 = 100;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -29,6 +32,8 @@ pub struct Settings {
     pub language: String,
     /// 便捷粘贴:搜索框为空时按数字键 1-9 直接粘贴对应条目
     pub quick_paste: bool,
+    /// 窗口底色不透明度(50-100):界面据此改写 CSS 变量 --bg
+    pub opacity: u8,
 }
 
 /// 默认热键:Ctrl+Shift+V(mac 上按习惯用 Cmd+Shift+V)
@@ -47,6 +52,7 @@ impl Default for Settings {
             max_items: 500,
             language: "zh".to_string(),
             quick_paste: true,
+            opacity: 92,
         }
     }
 }
@@ -85,8 +91,8 @@ pub fn start(app: &AppHandle) {
     state::set_max_items(current.max_items);
     save();
     println!(
-        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={}",
-        current.hotkey, current.max_items, current.language, current.quick_paste
+        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}%",
+        current.hotkey, current.max_items, current.language, current.quick_paste, current.opacity
     );
 }
 
@@ -97,6 +103,7 @@ fn sanitize(mut settings: Settings) -> Settings {
         settings.hotkey = Settings::default().hotkey;
     }
     settings.max_items = settings.max_items.clamp(MIN_ITEMS, MAX_ITEMS);
+    settings.opacity = settings.opacity.clamp(MIN_OPACITY, MAX_OPACITY);
     if settings.language != "en" {
         settings.language = "zh".to_string();
     }
@@ -144,11 +151,12 @@ pub fn cmd_set_settings(app: AppHandle, settings: Settings) -> Result<Settings, 
     }
 
     klog!(
-        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={}",
+        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}%",
         next.hotkey,
         next.max_items,
         next.language,
-        next.quick_paste
+        next.quick_paste,
+        next.opacity
     );
     Ok(next)
 }

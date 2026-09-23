@@ -953,6 +953,24 @@ button.row:hover {
   margin-top: 4px;
   color: #8b8f98;
 }
+/* 设置页外观:透明度滑条 */
+.opacity-row {
+  display: flex;
+  align-items: center;
+}
+.opacity-row input[type='range'] {
+  width: 150px;
+  margin: 0;
+}
+.opacity-row > span {
+  margin-left: 8px;
+  min-width: 36px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
 /* 关于页里的日志文件名(完整路径放在 title 里,点行复制路径) */
 .log-path {
   max-width: 300px;
