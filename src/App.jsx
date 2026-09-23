@@ -582,8 +582,14 @@ export default function App() {
         setSelIdx(0);
       }
     });
+    // 呼出时固定回到记录列表:哪怕隐藏前停留在设置页,下次呼出也直接进筛选入口
+    const unlistenSummon = listen('window-summoned', () => {
+      setView('list');
+      setSelIdx(0);
+    });
     return () => {
       unlisten.then((f) => f());
+      unlistenSummon.then((f) => f());
     };
   }, []);
 

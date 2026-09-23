@@ -320,6 +320,8 @@ fn cmd_set_hotkey_recording(app: tauri::AppHandle, recording: bool) {
 
 /// 显示主窗口并抢到焦点(粘贴时需要把焦点还给"上一个活动窗口",所以先记下来)
 pub fn show_main(app: &tauri::AppHandle) {
+    // 呼出事件:前端收到后从设置页等切回记录列表(每次呼出固定回到筛选入口)
+    let _ = app.emit_all("window-summoned", ());
     #[cfg(target_os = "linux")]
     x11::remember_target_window();
 
