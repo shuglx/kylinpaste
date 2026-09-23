@@ -12,6 +12,8 @@ mod system;
 mod x11;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
+use once_cell::sync::Lazy;
 use tauri::{Manager, WindowEvent};
 
 
@@ -27,6 +29,10 @@ static LAST_TOGGLE_MS: AtomicU64 = AtomicU64::new(0);
 // 真值只在主线程(show/hide 与 Focused 事件)里更新。
 static WINDOW_VISIBLE: AtomicBool = AtomicBool::new(false);
 static WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
+/// 主窗口最近一次的位置(物理坐标):
+/// UKUI 等桌面会在窗口重新映射时重新摆放(呼出位置每次都变的原因),
+/// 呼出时恢复,保证每次出现都在同一位置(mac 的 WM 自己记住位置,不走这里)
+static WIN_POS: Lazy<Mutex<Option<(i32, i32)>>> = Lazy::new(|| Mutex::new(None));
 /// 置顶(图钉)状态镜像:粘贴链路据此决定"保持窗口显示"还是"隐藏",
 /// Linux 呼出窗口后还要据此补发置顶状态(重映射会丢 ABOVE)
 static ALWAYS_ON_TOP: AtomicBool = AtomicBool::new(false);
@@ -62,6 +68,12 @@ fn main() {
                 if event.window().label() == "main" {
                     api.prevent_close();
                     hide_main(&event.window().app_handle());
+                }
+            }
+            // 主窗口位置:拖动过程中持续更新(呼出时据此恢复)
+            WindowEvent::Moved(position) => {
+                if event.window().label() == "main" {
+                    *WIN_POS.lock().unwrap() = Some((position.x, position.y));
                 }
             }
             // 焦点真值只在这里更新(主线程)
@@ -338,6 +350,12 @@ pub fn show_main(app: &tauri::AppHandle) {
     let _ = app.show();
 
     if let Some(win) = app.get_window("main") {
+        // UKUI 会在窗口重新映射时重新摆放位置,呼出前恢复用户拖放过的位置;
+        // mac 的窗口管理器自己会记住位置,不需要这一步
+        #[cfg(target_os = "linux")]
+        if let Some((x, y)) = *WIN_POS.lock().unwrap() {
+            let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+        }
         let _ = win.show();
         let _ = win.unminimize();
     }
