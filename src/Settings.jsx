@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/tauri';
 import { open as openUrl } from '@tauri-apps/api/shell';
 import {
   IconChevron,
-  IconChevronLeft,
+  IconClose,
   IconDoc,
   IconExternalLink,
   IconInfo,
@@ -241,10 +241,12 @@ export default function Settings({
   t,
   onLanguageChange,
   counts,
+  initialAutostart,
 }) {
   const [tab, setTab] = useState('general');
   const [appInfo, setAppInfo] = useState(null);
-  const [autostart, setAutostart] = useState(false);
+  // 初始值由上层在应用启动时取好:避免进设置页后开关从"关"翻转到"开"的渲染闪烁
+  const [autostart, setAutostart] = useState(Boolean(initialAutostart));
   const [notice, setNotice] = useState(null);
   const [hotkeyStatus, setHotkeyStatus] = useState(null);
   const [logPath, setLogPath] = useState(null);
@@ -252,7 +254,6 @@ export default function Settings({
 
   useEffect(() => {
     invoke('cmd_get_app_info').then(setAppInfo).catch(() => {});
-    invoke('cmd_get_autostart').then(setAutostart).catch(() => {});
     invoke('cmd_get_log_path').then(setLogPath).catch(() => {});
     invoke('cmd_get_storage_files').then(setStorageFiles).catch(() => {});
   }, []);
@@ -352,12 +353,12 @@ export default function Settings({
 
       <section className="pane">
         <header className="pane-head" data-tauri-drag-region>
-          <button type="button" className="icon-btn" title={t.back} onClick={onClose}>
-            <IconChevronLeft />
-          </button>
           <h1>
             {tab === 'general' ? t.tabGeneral : tab === 'storage' ? t.tabStorage : t.tabAbout}
           </h1>
+          <button type="button" className="icon-btn pane-close" title={t.close} onClick={onClose}>
+            <IconClose />
+          </button>
         </header>
 
         <div className="pane-body">

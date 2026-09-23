@@ -224,10 +224,17 @@ export default function App() {
   }, []);
 
   // 图片资源目录(缩略图/原图的绝对路径,用于 asset 协议加载)
+  const [autostartInitial, setAutostartInitial] = useState(null);
+
   useEffect(() => {
     invoke('cmd_get_asset_dirs')
       .then((dirs) => setAssets(dirs))
       .catch((e) => console.error('获取图片目录失败：', e));
+    // 启动时就取自启状态:设置页的开关直接以真实值渲染,不再出现
+    // "先进页面显示为关、再翻转为开"的动画
+    invoke('cmd_get_autostart')
+      .then(setAutostartInitial)
+      .catch(() => {});
   }, []);
 
   // 把 WebView 信息写进日志:麒麟上要靠它确认 WebKitGTK 版本(判断 CSS 支持范围)
@@ -699,6 +706,7 @@ export default function App() {
           onClose={() => setView('list')}
           t={t}
           counts={storageCounts}
+          initialAutostart={autostartInitial}
         />
       </div>
     );

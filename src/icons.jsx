@@ -77,6 +77,13 @@ export const IconChevron = () => (
 );
 
 /** 返回:Tabler `chevron-left` */
+export const IconClose = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
+    <path d="M18 6l-12 12" />
+    <path d="M6 6l12 12" />
+  </svg>
+);
+
 export const IconChevronLeft = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
     <path d="M15 6l-6 6l6 6" />

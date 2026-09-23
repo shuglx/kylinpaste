@@ -735,6 +735,8 @@ button:focus,
 }
 
 .pane-head > * + * { margin-left: 2px; }
+/* 关闭按钮固定在右上角 */
+.pane-head .pane-close { margin-left: auto; }
 .pane-head h1 {
   font-size: 15px;
   font-weight: 600;
