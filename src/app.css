@@ -1,7 +1,9 @@
 /* KylinPaste:极简亮色界面(无标题栏) */
 
 :root {
-  --bg: #ffffff;
+  /* 半透明底色:窗口微微透出后面一点(mac/麒麟的窗口本身都是 transparent 的,
+     圆角与外框仍由 .app 自绘);弹层/菜单仍是不透明的 #fff,保证可读性 */
+  --bg: rgba(255, 255, 255, 0.92);
   --text: #16181d;
   --muted: #8b8f98;
   --muted-2: #a9aeb8;
