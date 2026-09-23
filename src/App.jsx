@@ -492,8 +492,9 @@ export default function App() {
         e.preventDefault();
         const n = visibleRef.current.length;
         if (!n) return;
+        // 不环绕:到第一条/最后一条就停住
         setSelIdx((i) =>
-          e.key === 'ArrowDown' ? (i + 1 >= n ? 0 : i + 1) : i - 1 < 0 ? n - 1 : i - 1
+          e.key === 'ArrowDown' ? Math.min(i + 1, n - 1) : Math.max(0, i - 1)
         );
         return;
       }
@@ -598,7 +599,7 @@ export default function App() {
   }, []);
 
   // 滚轮 = 移动选中项:呼出后可以直接滚轮快速选记录,列表随光标滚动
-  // (到顶/到底后继续滚动即环绕)。触控板的连续小 deltaY 会累积,
+  // (到顶/到底后停住,列表随选中项滚动)。触控板的连续小 deltaY 会累积,
   // 每满一格滚轮的量才移动一条,避免惯性下一路飞过
   const wheelAccRef = useRef(0);
   useEffect(() => {
@@ -621,7 +622,7 @@ export default function App() {
       setSelIdx((i) => {
         let j = i;
         for (let k = 0; k < moves; k += 1) {
-          j = dir > 0 ? (j + 1 >= n ? 0 : j + 1) : j - 1 < 0 ? n - 1 : j - 1;
+          j = dir > 0 ? Math.min(j + 1, n - 1) : Math.max(0, j - 1);
         }
         return j;
       });
