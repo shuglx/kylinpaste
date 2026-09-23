@@ -276,15 +276,14 @@ button:focus,
   font-size: 14.5px;
   font-weight: 600;
   color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* 文件路径/截图尺寸这类「辅助信息」用灰色弱化 */
 .title .title-aux {
   font-weight: 500;
   color: var(--muted);
-}
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .sub {
@@ -982,4 +981,19 @@ button.row:hover {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12.5px;
+}
+
+/* ================================================================
+   Linux 窗口外框阴影:窗口比界面大一圈透明边距,投影在网页内自绘
+   (UKUI 等桌面的合成器不给透明无装饰窗口画投影;mac 有系统阴影,
+   因此以下规则都挂在 body.platform-linux 上,mac 完全不受影响)
+   ================================================================ */
+body.platform-linux {
+  padding: 28px;
+}
+
+body.platform-linux .app {
+  box-shadow:
+    0 5px 24px rgba(0, 0, 0, 0.32),
+    0 1px 4px rgba(0, 0, 0, 0.18);
 }
