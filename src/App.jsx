@@ -921,6 +921,7 @@ export default function App() {
                 >
                   {specialIcon(rec)}
                 </button>
+                <i className="row-divider" />
                 <button
                   className={`row-btn${rec.group ? ' on' : ''}`}
                   title={rec.group ? t.groupTip(rec.group) : t.setGroup}

@@ -454,6 +454,15 @@ button:focus,
 
 /* 行尾操作:分组 / 收藏 / 删除(挨在一起,不撑开行宽) */ .row-actions > * + * { margin-left: 2px; }
 
+/* 特殊操作与分组之间的竖线分隔 */
+.row-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 15px;
+  margin: 0 4px;
+  background: var(--line-2);
+}
+
 .row-btn {
   flex: 0 0 auto;
   width: 26px;
