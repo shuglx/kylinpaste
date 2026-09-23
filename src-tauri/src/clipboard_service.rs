@@ -181,6 +181,10 @@ fn text_record(
     text: Option<String>,
     source_app: Option<String>,
 ) -> ClipboardRecord {
+    // 超长的富文本不存储——拦腰截断的 HTML 是坏标记,粘贴进 WPS/Word 会失败;
+    // 退化为纯文本记录,保证一定能粘(纯文本截断只丢尾部,不会坏)。
+    // 正常体量的富文本原样保留,不截断。
+    let html = html.filter(|h| h.chars().count() <= state::MAX_TEXT_CHARS);
     let kind = if html.is_some() { "html" } else { "text" };
     let text = text.unwrap_or_default();
     let hash = hash_bytes(html.clone().unwrap_or_else(|| text.clone()).as_bytes());
@@ -188,7 +192,7 @@ fn text_record(
         id: 0,
         kind: kind.into(),
         text: Some(state::truncate_text(&text)),
-        html: html.map(|h| state::truncate_text(&h)),
+        html,
         files: None,
         image_path: None,
         hash,
@@ -222,7 +226,8 @@ fn html_has_visible_text(html: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::html_has_visible_text;
+    use super::{html_has_visible_text, text_record};
+    use crate::state;
 
     /// Word/WPS 复制文字:富文本里有正文 → 必须按文字处理(哪怕剪贴板上还挂着位图)
     #[test]
@@ -230,6 +235,20 @@ mod tests {
         assert!(html_has_visible_text("<p class=MsoNormal>你好 world</p>"));
         assert!(html_has_visible_text("<table><tr><td>42</td></tr></table>"));
         assert!(html_has_visible_text("没有标签的纯文本片段"));
+    }
+
+    /// 超长富文本退化为纯文本记录(被截断的 html 粘进 WPS 会失败)
+    #[test]
+    fn oversize_html_falls_back_to_text() {
+        let big = format!("<html><p>{}</p>", "x".repeat(state::MAX_TEXT_CHARS + 1));
+        let rec = text_record(Some(big), Some("https://a.b/c".into()), None);
+        assert_eq!(rec.kind, "text");
+        assert!(rec.html.is_none());
+        assert_eq!(rec.text.as_deref(), Some("https://a.b/c"));
+
+        let ok = text_record(Some("<p>短的</p>".into()), Some("正文".into()), None);
+        assert_eq!(ok.kind, "html");
+        assert_eq!(ok.html.as_deref(), Some("<p>短的</p>"));
     }
 
     /// 浏览器右键"复制图片":富文本里只有 <img> 或空标签 → 仍然是图片

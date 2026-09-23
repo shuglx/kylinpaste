@@ -78,7 +78,10 @@ pub const IMAGES_DIR: &str = "clipboard_images";
 /// 缩略图目录(列表里展示用,长边 240px)
 pub const THUMBS_DIR: &str = "clipboard_images/thumbs";
 /// 单条文本内容最大保存字符数
-const MAX_TEXT_CHARS: usize = 10_000;
+/// 单条文字/富文本字段的最大字符数。
+/// 富文本**不做拦腰截断**:坏标记会让 WPS/Word 解析失败而粘不出来,
+/// 超过上限的 html 直接退化为纯文本记录(见 clipboard_service::text_record)。
+pub const MAX_TEXT_CHARS: usize = 200_000;
 /// 分组名最大字符数(超长截断,避免前端被撑爆)
 const MAX_GROUP_CHARS: usize = 32;
 const HISTORY_FILE: &str = "history.json";
@@ -143,8 +146,15 @@ fn load() {
         Ok(file) => {
             let mut hist = HISTORY.lock();
             hist.clear();
-            for rec in file.items {
+            let mut repaired = 0usize;
+            for mut rec in file.items {
+                if drop_broken_html(&mut rec) {
+                    repaired += 1;
+                }
                 hist.push_back(rec);
+            }
+            if repaired > 0 {
+                eprintln!("[持久化] 修复 {repaired} 条被截断的富文本记录(已退化为纯文本)");
             }
             let before = hist.len();
             trim(&mut hist, max_items());
@@ -351,6 +361,24 @@ fn remove_record_files(rec: &ClipboardRecord, alive: &[String]) {
     }
 }
 
+/// 历史文件里"被拦腰截断的富文本"是坏标记(老版本把 html 截到 1 万字符),
+/// 粘贴进 WPS/Word 会解析失败。识别:正常 HTML 片段去尾部空白后必以 `>` 结束。
+/// 命中则退化为纯文本记录(kind 同步改回 text),保证一定能粘。返回是否做了修复。
+fn drop_broken_html(rec: &mut ClipboardRecord) -> bool {
+    let broken = rec
+        .html
+        .as_deref()
+        .map(|h| !h.trim_end().ends_with('>'))
+        .unwrap_or(false);
+    if broken {
+        rec.html = None;
+        if rec.kind == "html" {
+            rec.kind = "text".into();
+        }
+    }
+    broken
+}
+
 pub fn truncate_text(s: &str) -> String {
     if s.chars().count() > MAX_TEXT_CHARS {
         s.chars().take(MAX_TEXT_CHARS).collect()
@@ -503,6 +531,26 @@ mod tests {
             set_group(999_999_999, Some("x".into())).is_none(),
             "id 不存在时返回 None"
         );
+    }
+
+    /// 载入时清理被截断的坏 html:退化为纯文本;完好的 html 不动
+    #[test]
+    fn broken_html_is_dropped_on_load() {
+        let mut bad = rec("h-html-bad", "http://a.b");
+        bad.kind = "html".into();
+        bad.html = Some("<html xmlns:w=\"urn:schemas\"><p>foo".into());
+        assert!(drop_broken_html(&mut bad));
+        assert_eq!(bad.kind, "text");
+        assert!(bad.html.is_none());
+
+        let mut good = rec("h-html-ok", "http://a.b");
+        good.kind = "html".into();
+        good.html = Some("<p>ok</p>\n".into());
+        assert!(!drop_broken_html(&mut good));
+        assert!(good.html.is_some());
+
+        let mut plain = rec("h-text", "普通文字");
+        assert!(!drop_broken_html(&mut plain));
     }
 
     /// 删除:只删给到的 id,其它记录不受影响
