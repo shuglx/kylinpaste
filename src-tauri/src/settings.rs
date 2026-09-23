@@ -18,7 +18,7 @@ const FILE: &str = "settings.json";
 const MIN_ITEMS: usize = 100;
 const MAX_ITEMS: usize = 10_000;
 /// 窗口底色不透明度的允许区间(百分比,界面滑条 50%-100%)
-const MIN_OPACITY: u8 = 50;
+const MIN_OPACITY: u8 = 75;
 const MAX_OPACITY: u8 = 100;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -52,7 +52,7 @@ impl Default for Settings {
             max_items: 500,
             language: "zh".to_string(),
             quick_paste: true,
-            opacity: 92,
+            opacity: 90,
         }
     }
 }

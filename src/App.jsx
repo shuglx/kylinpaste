@@ -36,7 +36,7 @@ const DEFAULT_SETTINGS = {
   max_items: 500,
   language: 'zh',
   quick_paste: true,
-  opacity: 92,
+  opacity: 90,
 };
 
 /** 分组配色:mac 标签那 7 个颜色(从截图上取样得到),循环使用。
@@ -196,7 +196,7 @@ export default function App() {
     const opacity = (settings || DEFAULT_SETTINGS).opacity;
     document.documentElement.style.setProperty(
       '--bg',
-      `rgba(255, 255, 255, ${Math.min(100, Math.max(50, opacity || 92)) / 100})`
+      `rgba(255, 255, 255, ${Math.min(100, Math.max(50, opacity || 90)) / 100})`
     );
   }, [settings]);
 

@@ -252,16 +252,21 @@ export default function Settings({
   const [logPath, setLogPath] = useState(null);
 
   // 透明度滑条:拖动时立即预览(直接改 CSS 变量),松手/键盘停顿后才落盘
-  const [opacity, setOpacity] = useState((settings && settings.opacity) || 92);
+  const [opacity, setOpacity] = useState((settings && settings.opacity) || 90);
   useEffect(() => {
-    setOpacity((settings && settings.opacity) || 92);
+    setOpacity((settings && settings.opacity) || 90);
   }, [settings && settings.opacity]);
+  // 预览即时生效;落盘走防抖——老 WebKitGTK(麒麟)拖动结束时不可靠地派发
+  // pointerup/keyup,依赖它们会导致"拖了但没保存",再进设置页回显旧值
+  const commitTimer = useRef(null);
   const previewOpacity = (value) => {
     setOpacity(value);
     document.documentElement.style.setProperty(
       '--bg',
       `rgba(255, 255, 255, ${value / 100})`
     );
+    if (commitTimer.current) clearTimeout(commitTimer.current);
+    commitTimer.current = setTimeout(() => commit({ opacity: value }), 350);
   };
   const [storageFiles, setStorageFiles] = useState([]);
 
@@ -418,13 +423,11 @@ export default function Settings({
                   <div className="opacity-row">
                     <input
                       type="range"
-                      min="50"
+                      min="75"
                       max="100"
                       step="1"
                       value={opacity}
                       onChange={(e) => previewOpacity(Number(e.target.value))}
-                      onPointerUp={() => commit({ opacity })}
-                      onKeyUp={() => commit({ opacity })}
                     />
                     <span>{opacity}%</span>
                   </div>

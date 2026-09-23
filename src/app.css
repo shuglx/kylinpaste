@@ -3,7 +3,7 @@
 :root {
   /* 半透明底色:窗口微微透出后面一点(mac/麒麟的窗口本身都是 transparent 的,
      圆角与外框仍由 .app 自绘);弹层/菜单仍是不透明的 #fff,保证可读性 */
-  --bg: rgba(255, 255, 255, 0.92);
+  --bg: rgba(255, 255, 255, 0.9);
   --text: #16181d;
   --muted: #8b8f98;
   --muted-2: #a9aeb8;
@@ -958,9 +958,30 @@ button.row:hover {
   display: flex;
   align-items: center;
 }
+/* 老 WebKitGTK(麒麟)对原生 range 的滑块定位有问题(会飘出轨道),
+   关掉原生外观自绘,mac 与麒麟渲染一致 */
 .opacity-row input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
   width: 150px;
+  height: 18px;
   margin: 0;
+  background: transparent;
+}
+.opacity-row input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #e2e4e8;
+}
+.opacity-row input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  /* 让滑块中心对准轨道:-(thumb - track) / 2 */
+  margin-top: -5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .opacity-row > span {
   margin-left: 8px;
