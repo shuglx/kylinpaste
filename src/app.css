@@ -738,6 +738,8 @@ button:focus,
 /* 关闭按钮固定在右上角 */
 .pane-head .pane-close { margin-left: auto; }
 .pane-head h1 {
+  /* 返回按钮移除后标题顶得太靠左,稍微右移一点 */
+  margin-left: 8px;
   font-size: 15px;
   font-weight: 600;
 }

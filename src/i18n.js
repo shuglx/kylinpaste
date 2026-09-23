@@ -80,7 +80,7 @@ const zh = {
   openPathFailed: (e) => `打开文件失败：${e}`,
 
   sectionI18n: '国际化',
-  sectionAbout: '关于',
+  sectionAbout: '产品',
   sectionLinks: '链接',
   autostart: '开机时启动',
   autostartFailed: (e) => `设置开机自启失败：${e}`,
@@ -187,7 +187,7 @@ const en = {
   openPathFailed: (e) => `Failed to open file: ${e}`,
 
   sectionI18n: 'Language',
-  sectionAbout: 'About',
+  sectionAbout: 'Product',
   sectionLinks: 'Links',
   autostart: 'Launch at login',
   autostartFailed: (e) => `Failed to change launch-at-login: ${e}`,
