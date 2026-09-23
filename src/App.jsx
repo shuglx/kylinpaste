@@ -597,6 +597,39 @@ export default function App() {
     };
   }, []);
 
+  // 滚轮 = 移动选中项:呼出后可以直接滚轮快速选记录,列表随光标滚动
+  // (到顶/到底后继续滚动即环绕)。触控板的连续小 deltaY 会累积,
+  // 每满一格滚轮的量才移动一条,避免惯性下一路飞过
+  const wheelAccRef = useRef(0);
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    const onWheel = (e) => {
+      if (viewRef.current !== 'list' || overlayRef.current) return;
+      const n = visibleRef.current.length;
+      if (!n) return;
+      e.preventDefault(); // 接管滚动:列表只跟随选中项滚
+      if (!e.deltaY) return;
+      if (Math.sign(e.deltaY) !== Math.sign(wheelAccRef.current)) wheelAccRef.current = 0;
+      wheelAccRef.current += e.deltaY;
+      // 累积满一格滚轮的量才移动一条(触控板的连续小位移不至于一路飞过)
+      const step = 100;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const moves = Math.floor(Math.abs(wheelAccRef.current) / step);
+      if (!moves) return;
+      wheelAccRef.current -= dir * moves * step;
+      setSelIdx((i) => {
+        let j = i;
+        for (let k = 0; k < moves; k += 1) {
+          j = dir > 0 ? (j + 1 >= n ? 0 : j + 1) : j - 1 < 0 ? n - 1 : j - 1;
+        }
+        return j;
+      });
+    };
+    list.addEventListener('wheel', onWheel, { passive: false });
+    return () => list.removeEventListener('wheel', onWheel);
+  }, []);
+
   // 搜索条件变化:选中项回到第一条
   useEffect(() => {
     setSelIdx(0);
