@@ -63,11 +63,14 @@ fn main() {
 
     tauri::Builder::default()
         .on_window_event(|event| match event.event() {
-            // 窗口没有标题栏,正常关不掉;这里只做防御:请求关闭时收起窗口而不是退出
+            // 任务栏右键「关闭」是用户唯一可见的关闭入口(窗口无标题栏):
+            // 真退出应用。之前拦截成"收起窗口",用户以为关了、进程却还在,
+            // 快捷键还能呼出,像出了 bug。窗口内没有关闭按钮,不存在误关问题。
             WindowEvent::CloseRequested { api, .. } => {
                 if event.window().label() == "main" {
                     api.prevent_close();
-                    hide_main(&event.window().app_handle());
+                    klog!("[窗口] 收到关闭请求(任务栏关闭),退出应用");
+                    event.window().app_handle().exit(0);
                 }
             }
             // 主窗口位置:拖动过程中持续更新(呼出时据此恢复)

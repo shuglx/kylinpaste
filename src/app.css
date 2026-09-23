@@ -479,6 +479,12 @@ button:focus,
   font-size: 0;
 }
 
+/* 设置页侧栏底部:退出应用(左下角,红色,吸底不贴选项卡) */
+.settings .side .side-quit {
+  width: 100%;
+  margin-top: auto;
+}
+
 .row-btn > svg { vertical-align: middle; }
 .row-btn:hover {
   background: var(--hover);

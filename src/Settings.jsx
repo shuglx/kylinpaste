@@ -250,6 +250,7 @@ export default function Settings({
   counts,
   initialAutostart,
 }) {
+  const [quitConfirm, setQuitConfirm] = useState(false);
   const [tab, setTab] = useState('general');
   const [appInfo, setAppInfo] = useState(null);
   // 初始值由上层在应用启动时取好:避免进设置页后开关从"关"翻转到"开"的渲染闪烁
@@ -370,6 +371,13 @@ export default function Settings({
         >
           <IconInfo />
           {t.tabAbout}
+        </button>
+        <button
+          type="button"
+          className="btn danger side-quit"
+          onClick={() => setQuitConfirm(true)}
+        >
+          {t.quitApp}
         </button>
       </aside>
 
@@ -554,6 +562,27 @@ export default function Settings({
           )}
         </div>
       </section>
+
+      {quitConfirm && (
+        <div className="modal-mask" onClick={() => setQuitConfirm(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-title">{t.quitTitle}</div>
+            <div className="modal-note">{t.quitNote}</div>
+            <div className="modal-actions">
+              <button className="btn" onClick={() => setQuitConfirm(false)}>
+                {t.cancel}
+              </button>
+              <button
+                className="btn danger"
+                autoFocus
+                onClick={() => invoke('cmd_quit_app').catch((e) => fail(String(e)))}
+              >
+                {t.quitOk}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {notice && <div className="toast">{notice}</div>}
     </div>
