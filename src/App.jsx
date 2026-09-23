@@ -14,9 +14,12 @@ import {
   IconPin,
   IconSearch,
   IconStar,
+  IconBolt,
+  IconClose,
   IconTag,
   IconTrash,
 } from './icons.jsx';
+import { open as openUrl } from '@tauri-apps/api/shell';
 
 // ---------------------------------------------------------------- 常量与工具
 
@@ -178,6 +181,8 @@ export default function App() {
   const [pinned, setPinned] = useState(() => localStorage.getItem(PIN_KEY) === '1');
   const [error, setError] = useState(null);
   const [toast, setToast] = useState(null);
+  // 查看大图(image 类记录的特殊操作)
+  const [lightbox, setLightbox] = useState(null);
   const [assets, setAssets] = useState(null);
   const [groupFilter, setGroupFilter] = useState(null);
   const [menuPos, setMenuPos] = useState(null);
@@ -375,6 +380,36 @@ export default function App() {
     });
   };
 
+  /** 特殊操作按钮的提示文字:按记录类型直达最常用的动作 */
+  const specialTitle = (rec) =>
+    rec.kind === 'image'
+      ? t.specialViewImage
+      : rec.kind === 'files'
+        ? t.specialOpenFolder
+        : rec.kind === 'link'
+          ? t.specialOpenLink
+          : t.specialPastePlain;
+
+  /** 特殊操作:文本贴纯文本 / 文件在文件管理器中打开 / 链接用浏览器打开 / 图片看大图 */
+  const runSpecial = (rec) => {
+    if (rec.kind === 'image') {
+      setLightbox(rec);
+      return;
+    }
+    if (rec.kind === 'files') {
+      const file = (rec.files || [])[0];
+      if (!file) return;
+      invoke('cmd_reveal_file', { path: file }).catch((e) => flash(String(e)));
+      return;
+    }
+    if (rec.kind === 'link') {
+      openUrl(rec.text || '').catch((e) => flash(String(e)));
+      return;
+    }
+    // 文字/富文本:只写纯文本再粘贴
+    invoke('cmd_paste_plain', { id: rec.id }).catch((e) => flash(String(e)));
+  };
+
   const flash = (msg) => {
     setToast(msg);
     window.setTimeout(() => setToast(null), 2200);
@@ -511,11 +546,18 @@ export default function App() {
   };
   // 有弹层打开时,Esc 交给弹层自己处理,不要顺手把窗口收起来
   const overlayRef = useRef(false);
-  overlayRef.current = Boolean(confirm || tagPop || menuPos);
+  const lightboxRef = useRef(false);
+  lightboxRef.current = Boolean(lightbox);
+  overlayRef.current = Boolean(confirm || tagPop || menuPos || lightbox);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
+        // 大图查看中:先关大图,再轮到收起窗口
+        if (lightboxRef.current) {
+          setLightbox(null);
+          return;
+        }
         if (overlayRef.current) return;
         runAfterModifierRelease(() => invoke('cmd_hide_main').catch(() => {}));
         return;
@@ -857,8 +899,18 @@ export default function App() {
                 </div>
               </div>
               <span className="time">{timeAgo(rec.created_at, t)}</span>
-              {/* 分组 → 收藏 → 删除(顺序由需求定死:标签在星星左边,删除在星星右边) */}
+              {/* 特殊操作 → 分组 → 收藏 → 删除 */}
               <div className="row-actions">
+                <button
+                  className="row-btn"
+                  title={specialTitle(rec)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    runSpecial(rec);
+                  }}
+                >
+                  <IconBolt />
+                </button>
                 <button
                   className={`row-btn${rec.group ? ' on' : ''}`}
                   title={rec.group ? t.groupTip(rec.group) : t.setGroup}
@@ -992,6 +1044,32 @@ export default function App() {
         />
       )}
 
+      {/* 查看大图:点击任意处或右上角 × 关闭 */}
+      {lightbox && (
+        <div className="lightbox" onClick={() => setLightbox(null)}>
+          <img
+            src={assets && lightbox.image_path
+              ? convertFileSrc(`${assets.data_dir}/${lightbox.image_path}`)
+              : undefined}
+            alt=""
+            onClick={(e) => e.stopPropagation()}
+            onError={() => {
+              setLightbox(null);
+              flash(t.imageMissing);
+            }}
+          />
+          <button
+            className="icon-btn lightbox-close"
+            title={t.close}
+            onClick={(e) => {
+              e.stopPropagation();
+              setLightbox(null);
+            }}
+          >
+            <IconClose />
+          </button>
+        </div>
+      )}
       {toast && <div className="toast">{toast}</div>}
       {error && <div className="errorbar">{t.pasteFailed(error)}</div>}
     </div>

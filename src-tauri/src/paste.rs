@@ -69,8 +69,39 @@ pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String
 
 /// 粘贴主链路:写剪贴板 → 隐藏窗口 → 归还焦点 → 注入快捷键
 fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
+    paste_steps_with(app, rec, |app, rec| write_clipboard(app, rec))
+}
+
+/// 以纯文本粘贴:只写 text/plain,富文本丢弃 html(给"就要无格式"的场景)。
+/// 其余链路(隐藏窗口/归还焦点/注入快捷键)与普通粘贴完全一致。
+pub fn paste_record_plain(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
+    klog!(
+        "[粘贴] 纯文本粘贴: 类型={} 哈希前8={}",
+        rec.kind,
+        &rec.hash[..rec.hash.len().min(8)]
+    );
+    state::suppress_monitor_for(4000);
+    let outcome = paste_steps_with(app, rec, |_, rec| {
+        let plain = rec.text.clone().unwrap_or_default();
+        clipboard_service::with_writer(|ctx| {
+            ctx.set_text(plain).map_err(|e| format!("写入纯文本失败: {e}"))
+        })
+    });
+    if let Err(e) = &outcome {
+        klog!("[粘贴] 纯文本粘贴失败: {e} —— 把主窗口重新显示出来");
+        crate::show_main(app);
+    }
+    outcome
+}
+
+/// 粘贴主链路(写入方式可替换:普通粘贴按类型写,纯文本粘贴只写 text/plain)
+fn paste_steps_with(
+    app: &AppHandle,
+    rec: &ClipboardRecord,
+    write: impl Fn(&AppHandle, &ClipboardRecord) -> Result<(), String>,
+) -> Result<(), String> {
     // 1. 先写剪贴板:此时窗口还在,出错能立刻反馈给前端
-    write_clipboard(app, rec)?;
+    write(app, rec)?;
     klog!("[粘贴] 剪贴板已写入");
 
     // 2. 隐藏窗口,把焦点让出去。

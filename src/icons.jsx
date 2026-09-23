@@ -77,6 +77,13 @@ export const IconChevron = () => (
 );
 
 /** 返回:Tabler `chevron-left` */
+/* Tabler "bolt":特殊操作 —— 对每类记录直达最常用的那个动作 */
+export const IconBolt = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
+    <path d="M13 3l-7.5 8h4.5l-2 10 7.5 -8h-4.5l2 -10" />
+  </svg>
+);
+
 export const IconClose = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
     <path d="M18 6l-12 12" />

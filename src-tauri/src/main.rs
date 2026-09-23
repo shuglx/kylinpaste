@@ -165,6 +165,8 @@ show_main(&handle);
             cmd_get_log_path,
             cmd_get_storage_files,
             cmd_open_path,
+            cmd_paste_plain,
+            cmd_reveal_file,
             cmd_get_hotkey_status,
             cmd_set_hotkey_recording,
         ])
@@ -323,6 +325,50 @@ fn open_with_system(path: &str) -> Result<(), String> {
 #[tauri::command]
 fn cmd_get_autostart_path() -> Option<String> {
     system::autostart_path_str()
+}
+
+/// 特殊操作:只写纯文本再粘贴(富文本丢弃 html;文件/图片/链接各有自己的入口)
+#[tauri::command]
+fn cmd_paste_plain(app: tauri::AppHandle, id: u64) -> Result<(), String> {
+    let rec = state::get_by_id(id).ok_or("记录不存在")?;
+    let result = paste::paste_record_plain(&app, &rec);
+    if let Err(e) = &result {
+        klog!("[粘贴] 纯文本粘贴命令失败: {e}");
+    }
+    result
+}
+
+/// 特殊操作:在文件管理器中显示文件(mac 在 Finder 里定位,linux 打开所在目录)
+#[tauri::command]
+fn cmd_reveal_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    // 旧记录可能存的是 file:// + 百分号编码,先归一化成本地路径
+    let real = clipboard_service::normalize_file_entry(&path);
+    let p = std::path::Path::new(&real);
+    if !p.is_file() {
+        return Err(format!("文件不存在: {real}"));
+    }
+    // 先收起自己的窗口,别挡住弹出来的文件管理器
+    hide_main(&app);
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("open")
+        .arg("-R")
+        .arg(&real)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("在 Finder 中定位失败: {e}"));
+    #[cfg(target_os = "linux")]
+    let result = {
+        let dir = p
+            .parent()
+            .map(|d| d.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "/".to_string());
+        open_with_system(&dir)
+    };
+    match &result {
+        Ok(()) => klog!("[特殊操作] 已在文件管理器中显示 {real}"),
+        Err(e) => klog!("[特殊操作] 定位文件失败: {e}"),
+    }
+    result
 }
 
 /// 全局热键的注册状态(设置界面据此提示"没绑上/被占用/是 Wayland")

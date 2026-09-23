@@ -1030,6 +1030,32 @@ button.row:hover {
   margin-top: 4px;
   color: var(--muted);
 }
+/* 查看大图:全屏遮罩(给一点压暗,聚焦图片;点任意处/× 返回列表) */
+.lightbox {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(16, 18, 22, 0.62);
+}
+.lightbox img {
+  max-width: calc(100% - 56px);
+  max-height: calc(100% - 56px);
+  border-radius: 8px;
+  background: #fff;
+}
+.lightbox-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  background: var(--surface);
+}
+
 /* 设置页外观:透明度滑条 */
 .opacity-row {
   display: flex;
