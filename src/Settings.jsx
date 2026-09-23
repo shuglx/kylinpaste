@@ -94,8 +94,15 @@ function Select({ value, options, onChange, width = 140 }) {
       return;
     }
     const rect = e.currentTarget.getBoundingClientRect();
+    // 菜单高度 = 每项 26px + 上下 padding(与 .menu/.menu-item 一致),超 260 会内滚
+    const menuHeight = Math.min(options.length * 26 + 8, 260);
+    // 底部放不下就向上弹:mac 的窗口边就是 webview 边,超出会被裁掉
+    let top = rect.bottom + 6;
+    if (top + menuHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - 6 - menuHeight);
+    }
     setPos({
-      top: rect.bottom + 6,
+      top,
       left: Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8)),
     });
     setOpen(true);
