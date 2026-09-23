@@ -36,7 +36,7 @@ const zh = {
   delete: '删除',
   clean: '清理',
   emptyTitle: '暂无记录',
-  emptyHint: '复制点什么',
+  emptyHint: '从随便复制点什么开始',
   noMatchTitle: '没有匹配的内容',
   noMatchHint: '换个关键词或分类试试',
   nothingToClean: '没有可清理的临时记录',

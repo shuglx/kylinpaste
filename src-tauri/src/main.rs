@@ -27,6 +27,14 @@ static LAST_TOGGLE_MS: AtomicU64 = AtomicU64::new(0);
 // 真值只在主线程(show/hide 与 Focused 事件)里更新。
 static WINDOW_VISIBLE: AtomicBool = AtomicBool::new(false);
 static WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
+/// 置顶(图钉)状态镜像:粘贴链路据此决定"保持窗口显示"还是"隐藏",
+/// Linux 呼出窗口后还要据此补发置顶状态(重映射会丢 ABOVE)
+static ALWAYS_ON_TOP: AtomicBool = AtomicBool::new(false);
+
+/// 当前是否置顶(镜像值,任意线程可读)
+pub fn is_always_on_top() -> bool {
+    ALWAYS_ON_TOP.load(Ordering::SeqCst)
+}
 
 /// 主窗口当前是否可见(镜像值,可在任意线程安全读取)
 pub fn window_visible() -> bool {
@@ -168,6 +176,7 @@ pub fn hide_main(app: &tauri::AppHandle) {
 #[tauri::command]
 fn cmd_set_always_on_top(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
     let win = app.get_window("main").ok_or("主窗口不存在")?;
+    ALWAYS_ON_TOP.store(enabled, Ordering::SeqCst);
     if let Err(e) = win.set_always_on_top(enabled) {
         klog!("[窗口] 置顶设置失败: {e}");
         return Err(e.to_string());
@@ -345,6 +354,12 @@ pub fn show_main(app: &tauri::AppHandle) {
             }
             klog!("[窗口] EWMH 前置主窗口未成功(桌面可能未响应激活请求)");
         });
+        // 置顶状态下补发一次 ABOVE:UKUI 这类桌面在窗口取消映射再映射后
+        // 会丢 _NET_WM_STATE_ABOVE,表现为"图钉亮着但窗口被压到后面"
+        if is_always_on_top() {
+            let ok = x11::set_above(true);
+            klog!("[窗口] 呼出后补发置顶状态: {ok}");
+        }
     }
 
     #[cfg(not(target_os = "linux"))]

@@ -73,10 +73,17 @@ fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
     write_clipboard(app, rec)?;
     klog!("[粘贴] 剪贴板已写入");
 
-    // 2. 隐藏窗口,把焦点让出去
-    crate::hide_main(app);
-    let hidden = wait_until_hidden(app, Duration::from_millis(800));
-    klog!("[粘贴] 主窗口已隐藏: {hidden}");
+    // 2. 隐藏窗口,把焦点让出去。
+    //    置顶(钉住)时**不隐藏**:界面留在原地方便连续粘贴多条;但焦点仍要归还,
+    //    否则注入的快捷键会打进我们自己的窗口(restore_focus 里的显式激活负责这事)。
+    //    另外隐藏再显示会让 UKUI 等桌面丢弃置顶状态,能不藏就不藏。
+    if crate::is_always_on_top() {
+        klog!("[粘贴] 窗口已置顶:保持显示,仅归还焦点后注入");
+    } else {
+        crate::hide_main(app);
+        let hidden = wait_until_hidden(app, Duration::from_millis(800));
+        klog!("[粘贴] 主窗口已隐藏: {hidden}");
+    }
 
     // 3. 确保焦点落回"唤起剪贴板之前的那个窗口"
     restore_focus();
