@@ -78,10 +78,30 @@ pub const IMAGES_DIR: &str = "clipboard_images";
 /// 缩略图目录(列表里展示用,长边 240px)
 pub const THUMBS_DIR: &str = "clipboard_images/thumbs";
 /// 单条文本内容最大保存字符数
-/// 单条文字/富文本字段的最大字符数。
-/// 富文本**不做拦腰截断**:坏标记会让 WPS/Word 解析失败而粘不出来,
-/// 超过上限的 html 直接退化为纯文本记录(见 clipboard_service::text_record)。
+/// 单条文字字段的最大字符数(纯文本超长截断,截断只丢尾部不会坏)。
 pub const MAX_TEXT_CHARS: usize = 200_000;
+/// 富文本 html 的绝对上限(字符数):超过就整个不存,只保留纯文本。
+/// 正常带格式内容(Word/WPS 一整页带样式)在几 KB 量级,64K 字符相当于几十页;
+/// 再大基本都是 Office 粘贴带出来的垃圾样式/隐藏数据,留着写剪贴板会明显卡顿。
+pub const MAX_HTML_CHARS: usize = 64_000;
+/// 相对膨胀规则:html 字符数超过纯文本的 30 倍、且多于 16K 时,
+/// 同样视为"样式垃圾"退化为纯文本(防"内容一点点、html 一大堆")。
+const HTML_BLOAT_RATIO: usize = 30;
+const HTML_BLOAT_MIN: usize = 16_000;
+
+/// 一条富文本记录是否保留 html:false 时只存纯文本(粘贴永远可用,不会卡)。
+/// html **不做拦腰截断**——坏标记会让 WPS/Word 解析失败而粘不出来,所以要么全留要么全丢。
+pub fn keep_html(html: &str, text: &str) -> bool {
+    let n = html.chars().count();
+    if n > MAX_HTML_CHARS {
+        return false;
+    }
+    let t = text.chars().count();
+    if t >= 20 && n > HTML_BLOAT_MIN && n > t * HTML_BLOAT_RATIO {
+        return false;
+    }
+    true
+}
 /// 分组名最大字符数(超长截断,避免前端被撑爆)
 const MAX_GROUP_CHARS: usize = 32;
 const HISTORY_FILE: &str = "history.json";
@@ -365,10 +385,11 @@ fn remove_record_files(rec: &ClipboardRecord, alive: &[String]) {
 /// 粘贴进 WPS/Word 会解析失败。识别:正常 HTML 片段去尾部空白后必以 `>` 结束。
 /// 命中则退化为纯文本记录(kind 同步改回 text),保证一定能粘。返回是否做了修复。
 fn drop_broken_html(rec: &mut ClipboardRecord) -> bool {
+    let text = rec.text.as_deref().unwrap_or_default();
     let broken = rec
         .html
         .as_deref()
-        .map(|h| !h.trim_end().ends_with('>'))
+        .map(|h| !h.trim_end().ends_with('>') || !keep_html(h, text))
         .unwrap_or(false);
     if broken {
         rec.html = None;

@@ -251,12 +251,12 @@ fn text_record(
     text: Option<String>,
     source_app: Option<String>,
 ) -> ClipboardRecord {
-    // 超长的富文本不存储——拦腰截断的 HTML 是坏标记,粘贴进 WPS/Word 会失败;
-    // 退化为纯文本记录,保证一定能粘(纯文本截断只丢尾部,不会坏)。
-    // 正常体量的富文本原样保留,不截断。
-    let html = html.filter(|h| h.chars().count() <= state::MAX_TEXT_CHARS);
-    let kind = if html.is_some() { "html" } else { "text" };
     let text = text.unwrap_or_default();
+    // 富文本要么全留要么全丢(拦腰截断的 HTML 是坏标记,粘贴进 WPS/Word 会失败):
+    // 超过绝对上限、或相对纯文本膨胀过头的(Office 常见的垃圾样式)都退化为纯文本,
+    // 避免粘贴时写一大坨 html 造成卡顿。判定标准见 state::keep_html。
+    let html = html.filter(|h| state::keep_html(h, &text));
+    let kind = if html.is_some() { "html" } else { "text" };
     let hash = hash_bytes(html.clone().unwrap_or_else(|| text.clone()).as_bytes());
     ClipboardRecord {
         id: 0,
@@ -332,7 +332,8 @@ mod tests {
     /// 超长富文本退化为纯文本记录(被截断的 html 粘进 WPS 会失败)
     #[test]
     fn oversize_html_falls_back_to_text() {
-        let big = format!("<html><p>{}</p>", "x".repeat(state::MAX_TEXT_CHARS + 1));
+        // 绝对上限:超过 state::MAX_HTML_CHARS 的 html 整个不存
+        let big = format!("<html><p>{}</p>", "x".repeat(state::MAX_HTML_CHARS + 1));
         let rec = text_record(Some(big), Some("https://a.b/c".into()), None);
         assert_eq!(rec.kind, "text");
         assert!(rec.html.is_none());
@@ -341,6 +342,31 @@ mod tests {
         let ok = text_record(Some("<p>短的</p>".into()), Some("正文".into()), None);
         assert_eq!(ok.kind, "html");
         assert_eq!(ok.html.as_deref(), Some("<p>短的</p>"));
+    }
+
+    /// 相对膨胀规则:html 远大于纯文本时退化为纯文本(Office 垃圾样式)
+    #[test]
+    fn bloated_html_falls_back_to_text() {
+        // 文本 100 字符,html 2 万字符:超过 16K 且 > 30 倍 → 不存 html
+        let bloated = format!("<p>{}</p>", "<span style=x>".repeat(1300));
+        assert!(bloated.chars().count() > 16_000);
+        let rec = text_record(
+            Some(bloated),
+            Some("字".repeat(100).into()),
+            None,
+        );
+        assert_eq!(rec.kind, "text");
+        assert!(rec.html.is_none());
+
+        // 正常比例的富文本不受影响:文本 5000 字符,html 2 万字符(4 倍)
+        let normal_html = format!("<p>{}</p>", "字".repeat(19_000));
+        let ok = text_record(
+            Some(normal_html),
+            Some("字".repeat(5_000).into()),
+            None,
+        );
+        assert_eq!(ok.kind, "html");
+        assert!(ok.html.is_some());
     }
 
     /// 浏览器右键"复制图片":富文本里只有 <img> 或空标签 → 仍然是图片
