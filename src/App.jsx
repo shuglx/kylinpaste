@@ -598,38 +598,37 @@ export default function App() {
     };
   }, []);
 
-  // 列表原生滚动保持流畅,选中项跟随视口:滚动停/进行中,高亮框落在视口顶部
-  // 可见的行上;↑/↓ 则反过来移动选中项并让列表跟随(见下方 follow 逻辑)。
-  // scrollSelRef 记录"由滚动产生的选中下标",跟随滚动 effect 据此跳过,
-  // 避免滚动→setSelIdx→回滚列表的互相拉扯
-  const scrollSelRef = useRef(null);
-  const scrollRafRef = useRef(0);
+  // 滚轮 = 移动选中项:呼出后可以直接滚轮快速选记录,列表随光标滚动
+  // (到顶/到底后停住,列表随选中项滚动)。触控板的连续小 deltaY 会累积,
+  // 每满一格滚轮的量才移动一条,避免惯性下一路飞过
+  const wheelAccRef = useRef(0);
   useEffect(() => {
     const list = listRef.current;
     if (!list) return undefined;
-    const onScroll = () => {
-      if (scrollRafRef.current) return;
-      scrollRafRef.current = requestAnimationFrame(() => {
-        scrollRafRef.current = 0;
-        if (viewRef.current !== 'list' || overlayRef.current) return;
-        const listTop = list.getBoundingClientRect().top;
-        let idx = -1;
-        list.querySelectorAll('.item').forEach((row) => {
-          if (idx < 0 && row.getBoundingClientRect().bottom > listTop + 4) {
-            idx = Number(row.dataset.idx);
-          }
-        });
-        if (idx >= 0 && idx !== selIdxRef.current) {
-          scrollSelRef.current = idx;
-          setSelIdx(idx);
+    const onWheel = (e) => {
+      if (viewRef.current !== 'list' || overlayRef.current) return;
+      const n = visibleRef.current.length;
+      if (!n) return;
+      e.preventDefault(); // 接管滚动:列表只跟随选中项滚
+      if (!e.deltaY) return;
+      if (Math.sign(e.deltaY) !== Math.sign(wheelAccRef.current)) wheelAccRef.current = 0;
+      wheelAccRef.current += e.deltaY;
+      // 累积满一格滚轮的量才移动一条(触控板的连续小位移不至于一路飞过)
+      const step = 100;
+      const dir = e.deltaY > 0 ? 1 : -1;
+      const moves = Math.floor(Math.abs(wheelAccRef.current) / step);
+      if (!moves) return;
+      wheelAccRef.current -= dir * moves * step;
+      setSelIdx((i) => {
+        let j = i;
+        for (let k = 0; k < moves; k += 1) {
+          j = dir > 0 ? Math.min(j + 1, n - 1) : Math.max(0, j - 1);
         }
+        return j;
       });
     };
-    list.addEventListener('scroll', onScroll, { passive: true });
-    return () => {
-      list.removeEventListener('scroll', onScroll);
-      if (scrollRafRef.current) cancelAnimationFrame(scrollRafRef.current);
-    };
+    list.addEventListener('wheel', onWheel, { passive: false });
+    return () => list.removeEventListener('wheel', onWheel);
   }, []);
 
   // 搜索条件变化:选中项回到第一条
@@ -642,13 +641,8 @@ export default function App() {
     setSelIdx((i) => Math.min(i, Math.max(0, visible.length - 1)));
   }, [visible.length]);
 
-  // 选中项滚出可视区时带回来(手动算滚动量,老 WebKitGTK 的 scrollIntoView 选项不全)。
-  // 由列表滚动产生的选中变化不需要回滚 —— 视口本来就在目标位置
+  // 选中项滚出可视区时带回来(手动算滚动量,老 WebKitGTK 的 scrollIntoView 选项不全)
   useEffect(() => {
-    if (scrollSelRef.current !== null) {
-      if (scrollSelRef.current === selIdx) scrollSelRef.current = null;
-      return;
-    }
     const row = selRowRef.current;
     const list = listRef.current;
     if (!row || !list) return;
@@ -793,7 +787,6 @@ export default function App() {
           return (
             <div
               key={rec.id}
-              data-idx={idx}
               ref={selIdx === idx ? selRowRef : undefined}
               className={`item${selIdx === idx ? ' sel' : ''}`}
               onClick={() => runAfterModifierRelease(() => pasteItem(rec.id))}
