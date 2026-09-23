@@ -912,7 +912,7 @@ export default function App() {
               {/* 特殊操作 → 分组 → 收藏 → 删除 */}
               <div className="row-actions">
                 <button
-                  className="row-btn"
+                  className="row-btn spec"
                   title={specialTitle(rec)}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -923,7 +923,7 @@ export default function App() {
                 </button>
                 <i className="row-divider" />
                 <button
-                  className={`row-btn${rec.group ? ' on' : ''}`}
+                  className={`row-btn tag${rec.group ? ' on' : ''}`}
                   title={rec.group ? t.groupTip(rec.group) : t.setGroup}
                   onClick={(e) => openTagPop(e, rec)}
                 >
