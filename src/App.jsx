@@ -14,8 +14,10 @@ import {
   IconPin,
   IconSearch,
   IconStar,
-  IconBolt,
+  IconClipboardText,
   IconClose,
+  IconEye,
+  IconFolderOpen,
   IconTag,
   IconTrash,
 } from './icons.jsx';
@@ -380,29 +382,37 @@ export default function App() {
     });
   };
 
-  /** 特殊操作按钮的提示文字:按记录类型直达最常用的动作 */
-  const specialTitle = (rec) =>
-    rec.kind === 'image'
-      ? t.specialViewImage
-      : rec.kind === 'files'
-        ? t.specialOpenFolder
-        : rec.kind === 'link'
-          ? t.specialOpenLink
-          : t.specialPastePlain;
+  /** 特殊操作:按展示类型(kindTone,链接判定在这里)分发图标/提示/动作。
+   *  链接在 Rust 侧没有独立 kind,必须用 kindTone 而不是 rec.kind */
+  const specialTitle = (rec) => {
+    const kind = kindTone(rec);
+    if (kind === 'image') return t.specialViewImage;
+    if (kind === 'files') return t.specialOpenFolder;
+    if (kind === 'link') return t.specialOpenLink;
+    return t.specialPastePlain;
+  };
 
-  /** 特殊操作:文本贴纯文本 / 文件在文件管理器中打开 / 链接用浏览器打开 / 图片看大图 */
+  const specialIcon = (rec) => {
+    const kind = kindTone(rec);
+    if (kind === 'image') return <IconEye />;
+    if (kind === 'files') return <IconFolderOpen />;
+    if (kind === 'link') return <IconLink />;
+    return <IconClipboardText />;
+  };
+
   const runSpecial = (rec) => {
-    if (rec.kind === 'image') {
+    const kind = kindTone(rec);
+    if (kind === 'image') {
       setLightbox(rec);
       return;
     }
-    if (rec.kind === 'files') {
+    if (kind === 'files') {
       const file = (rec.files || [])[0];
       if (!file) return;
       invoke('cmd_reveal_file', { path: file }).catch((e) => flash(String(e)));
       return;
     }
-    if (rec.kind === 'link') {
+    if (kind === 'link') {
       openUrl(rec.text || '').catch((e) => flash(String(e)));
       return;
     }
@@ -909,7 +919,7 @@ export default function App() {
                     runSpecial(rec);
                   }}
                 >
-                  <IconBolt />
+                  {specialIcon(rec)}
                 </button>
                 <button
                   className={`row-btn${rec.group ? ' on' : ''}`}

@@ -77,10 +77,29 @@ export const IconChevron = () => (
 );
 
 /** 返回:Tabler `chevron-left` */
-/* Tabler "bolt":特殊操作 —— 对每类记录直达最常用的那个动作 */
-export const IconBolt = () => (
+/* Tabler "eye":图片/截图的特殊操作 —— 查看大图 */
+export const IconEye = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
-    <path d="M13 3l-7.5 8h4.5l-2 10 7.5 -8h-4.5l2 -10" />
+    <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+    <path d="M21 12c-2.4 4 -5.4 6 -9 6c-3.6 0 -6.6 -2 -9 -6c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6" />
+  </svg>
+);
+
+/* Tabler "clipboard-text":文字/富文本的特殊操作 —— 粘贴纯文本 */
+export const IconClipboardText = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
+    <path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2" />
+    <path d="M9 3m0 2a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2z" />
+    <path d="M9 12h6" />
+    <path d="M9 16h6" />
+  </svg>
+);
+
+/* Tabler "folder-open":文件的特殊操作 —— 在文件管理器中打开 */
+export const IconFolderOpen = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
+    <path d="M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.100a1 1 0 0 1 .936 1.35l-2.757 7.351a1 1 0 0 1 -.936 .649h-12.1a1 1 0 0 1 -.936 -1.35z" />
+    <path d="M9 11v-4a2 2 0 0 1 2 -2h3l2 2h4a2 2 0 0 1 2 2v1" />
   </svg>
 );
 

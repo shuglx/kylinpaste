@@ -120,13 +120,28 @@ fn paste_steps_with(
     // macOS 特例:app.hide() 之后偶尔我们仍是"最前"的那个应用(激活态没让出去),
     // 这时注入的 ⌘V 会打进我们自己的窗口,表现就是"只有第一次能粘贴"。
     // 检测到这种情况就显式 deactivate 一次,把激活态交给下一个应用。
+    // macOS:app.hide() 后激活态让出是异步的,前台常常暂时还是自己。
+    // 显式 deactivate 后**轮询**等前台真正变回其它应用再注入——之前固定睡 150ms,
+    // 切换慢时 ⌘V 会落进切换的空档里,粘贴无任何反应。
     #[cfg(target_os = "macos")]
-    if crate::appinfo::active_app_name().is_none() {
-        klog!("[粘贴] 隐藏后前台仍是自己,显式让出激活态");
-        // AppKit 只允许在主线程调用,必须 dispatch 回主线程(命令跑在线程池里)
+    {
+        let started = std::time::Instant::now();
         let handle = app.clone();
-        let _ = handle.run_on_main_thread(|| crate::appinfo::deactivate_self());
-        std::thread::sleep(Duration::from_millis(150));
+        let mut deactivated = false;
+        while crate::appinfo::active_app_name().is_none()
+            && started.elapsed() < Duration::from_millis(1200)
+        {
+            if !deactivated {
+                klog!("[粘贴] 隐藏后前台仍是自己,显式让出激活态");
+                // AppKit 只允许在主线程调用,必须 dispatch 回主线程(命令跑在线程池里)
+                let _ = handle.run_on_main_thread(|| crate::appinfo::deactivate_self());
+                deactivated = true;
+            }
+            std::thread::sleep(Duration::from_millis(40));
+        }
+        if deactivated {
+            klog!("[粘贴] 激活态已让出(等待 {}ms)", started.elapsed().as_millis());
+        }
     }
 
     // 注入前把"现在前台是谁"打出来:如果这里是我们自己(None)或空,说明焦点没让出去,
