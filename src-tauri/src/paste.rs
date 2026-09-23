@@ -22,6 +22,32 @@ use crate::state::{self, ClipboardRecord};
 /// 前端已过滤按键自动重复,这里是兜底(比如极快地连点两条记录)。
 static PASTE_BUSY: AtomicBool = AtomicBool::new(false);
 
+/// 特殊操作:纯文本粘贴。**必须 async**:粘贴链路里有最长 2s 的等待
+/// (隐藏窗口/等激活态让出),同步命令会占住主线程,NSApp hide 与排队到
+/// 主线程的操作都得不到处理,前台永远切不出去,⌘V 发进空档(粘贴无反应)。
+#[tauri::command(async)]
+pub fn cmd_paste_plain(app: AppHandle, id: u64) -> Result<(), String> {
+    if PASTE_BUSY
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        klog!("[粘贴] 已有粘贴在进行,忽略纯文本粘贴请求(id={id})");
+        return Ok(());
+    }
+    let result = match state::get_by_id(id) {
+        Some(rec) => {
+            let r = paste_record_plain(&app, &rec);
+            if let Err(e) = &r {
+                klog!("[粘贴] 纯文本粘贴命令失败: {e}");
+            }
+            r
+        }
+        None => Err("记录不存在".into()),
+    };
+    PASTE_BUSY.store(false, Ordering::SeqCst);
+    result
+}
+
 #[tauri::command(async)]
 pub fn cmd_paste_item(app: AppHandle, id: u64) -> Result<(), String> {
     if PASTE_BUSY
@@ -67,41 +93,24 @@ pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String
     outcome
 }
 
-/// 粘贴主链路:写剪贴板 → 隐藏窗口 → 归还焦点 → 注入快捷键
-fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
-    paste_steps_with(app, rec, |app, rec| write_clipboard(app, rec))
-}
-
-/// 以纯文本粘贴:只写 text/plain,富文本丢弃 html(给"就要无格式"的场景)。
-/// 其余链路(隐藏窗口/归还焦点/注入快捷键)与普通粘贴完全一致。
+/// 以纯文本粘贴:与普通粘贴**完全相同的链路**(同一函数、同一时序),
+/// 只是临时清掉 html 字段,write_clipboard 自然落到纯文本分支(_ => set_text)。
+/// 之前单独抄一条链路,mac 上隐藏后的时序与正常粘贴不同,⌘V 频繁落空。
 pub fn paste_record_plain(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
+    let mut plain_rec = rec.clone();
+    plain_rec.html = None;
+    plain_rec.kind = "text".into();
     klog!(
-        "[粘贴] 纯文本粘贴: 类型={} 哈希前8={}",
-        rec.kind,
+        "[粘贴] 纯文本粘贴(复用普通链路): 哈希前8={}",
         &rec.hash[..rec.hash.len().min(8)]
     );
-    state::suppress_monitor_for(4000);
-    let outcome = paste_steps_with(app, rec, |_, rec| {
-        let plain = rec.text.clone().unwrap_or_default();
-        clipboard_service::with_writer(|ctx| {
-            ctx.set_text(plain).map_err(|e| format!("写入纯文本失败: {e}"))
-        })
-    });
-    if let Err(e) = &outcome {
-        klog!("[粘贴] 纯文本粘贴失败: {e} —— 把主窗口重新显示出来");
-        crate::show_main(app);
-    }
-    outcome
+    paste_record(app, &plain_rec)
 }
 
-/// 粘贴主链路(写入方式可替换:普通粘贴按类型写,纯文本粘贴只写 text/plain)
-fn paste_steps_with(
-    app: &AppHandle,
-    rec: &ClipboardRecord,
-    write: impl Fn(&AppHandle, &ClipboardRecord) -> Result<(), String>,
-) -> Result<(), String> {
+/// 粘贴主链路:写剪贴板 → 隐藏窗口 → 归还焦点 → 注入快捷键
+fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
     // 1. 先写剪贴板:此时窗口还在,出错能立刻反馈给前端
-    write(app, rec)?;
+    write_clipboard(app, rec)?;
     klog!("[粘贴] 剪贴板已写入");
 
     // 2. 隐藏窗口,把焦点让出去。
@@ -127,17 +136,20 @@ fn paste_steps_with(
     {
         let started = std::time::Instant::now();
         let handle = app.clone();
+        // hide 之后系统会自动把前台交给上一个应用(实测 ~100-200ms 完成);
+        // 立刻 deactivate 会取消这次自动切换,系统陷入"无激活应用"状态,
+        // ⌘V 发进空档(表现:粘贴无任何反应)。先等自然让出,400ms 仍未让出才兜底。
         let mut deactivated = false;
         while crate::appinfo::active_app_name().is_none()
             && started.elapsed() < Duration::from_millis(1200)
         {
-            if !deactivated {
-                klog!("[粘贴] 隐藏后前台仍是自己,显式让出激活态");
+            if !deactivated && started.elapsed() >= Duration::from_millis(400) {
+                klog!("[粘贴] 前台迟迟未让出,显式 deactivate 兜底");
                 // AppKit 只允许在主线程调用,必须 dispatch 回主线程(命令跑在线程池里)
                 let _ = handle.run_on_main_thread(|| crate::appinfo::deactivate_self());
                 deactivated = true;
             }
-            std::thread::sleep(Duration::from_millis(40));
+            std::thread::sleep(Duration::from_millis(25));
         }
         if deactivated {
             klog!("[粘贴] 激活态已让出(等待 {}ms)", started.elapsed().as_millis());

@@ -152,6 +152,7 @@ show_main(&handle);
             state::cmd_delete_records,
             state::cmd_get_asset_dirs,
             paste::cmd_paste_item,
+            paste::cmd_paste_plain,
             settings::cmd_get_settings,
             settings::cmd_set_settings,
             system::cmd_get_autostart,
@@ -165,7 +166,6 @@ show_main(&handle);
             cmd_get_log_path,
             cmd_get_storage_files,
             cmd_open_path,
-            cmd_paste_plain,
             cmd_reveal_file,
             cmd_get_hotkey_status,
             cmd_set_hotkey_recording,
@@ -325,17 +325,6 @@ fn open_with_system(path: &str) -> Result<(), String> {
 #[tauri::command]
 fn cmd_get_autostart_path() -> Option<String> {
     system::autostart_path_str()
-}
-
-/// 特殊操作:只写纯文本再粘贴(富文本丢弃 html;文件/图片/链接各有自己的入口)
-#[tauri::command]
-fn cmd_paste_plain(app: tauri::AppHandle, id: u64) -> Result<(), String> {
-    let rec = state::get_by_id(id).ok_or("记录不存在")?;
-    let result = paste::paste_record_plain(&app, &rec);
-    if let Err(e) = &result {
-        klog!("[粘贴] 纯文本粘贴命令失败: {e}");
-    }
-    result
 }
 
 /// 特殊操作:在文件管理器中显示文件(mac 在 Finder 里定位,linux 打开所在目录)
