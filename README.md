@@ -1,4 +1,4 @@
-# KylinPaste
+# 麒麟剪贴板
 
 ![Header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=170&text=KylinPaste&fontSize=58&animation=fadeIn)
 
@@ -13,10 +13,9 @@
 
 ## 为什么做这个
 
-国企事业单位完成信创改造后，日常办公跑在银河麒麟 + 国产 CPU（飞腾/鲲鹏等 ARM64 平台）上，桌面生态比较封闭：
+企事业单位在信创国产化过程中，不少办公终端换成了银河麒麟OS + 国产 CPU（飞腾/鲲鹏等 ARM64 平台）上，桌面生态比较封闭：
 
-- Windows 上成熟的剪贴板工具（Ditto、ClipboardFusion 等）都没有 Linux/ARM64 版本；
-- Linux 侧通用的方案（CopyQ、GPaste）在麒麟上要么缺依赖、要么对低版本 WebKitGTK/UKUI 桌面兼容不佳，且缺少针对国产办公场景（WPS、国产浏览器、微信/QX)的适配打磨;
+- Windows 上成熟的剪贴板工具 (Ditto、ClipboardFusion等) 没有适配的 Linux/ARM64 版本；Linux 侧通用的方案（CopyQ、GPaste）在麒麟上要么缺依赖、要么对低版本 WebKitGTK/UKUI 桌面兼容不佳;
 - 办公中最常用的"复制 → 找历史 → 再粘贴"这件事，恰恰是信创环境里体验缺口最大的。
 
 KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——以麒麟 V10 SP1 自带的 WebKitGTK 2.28 基线构建，UI 与交互按国产桌面（UKUI）的真实问题逐一适配，同时提供 macOS 版本方便开发预览。
