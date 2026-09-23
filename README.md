@@ -14,12 +14,12 @@
 
 企事业单位在信创国产化过程中，不少办公终端换成了银河麒麟OS + 国产 CPU（飞腾/鲲鹏等 ARM64 平台）上，桌面生态比较封闭：
 
-- Windows 上成熟的剪贴板工具 (Ditto、ClipboardFusion等) 没有适配的 Linux/ARM64 版本；Linux 侧通用的方案（CopyQ、GPaste）在麒麟上要么缺依赖、要么对低版本 WebKitGTK/UKUI 桌面兼容不佳;
+- Windows 上成熟的剪贴板工具 (Ditto、ClipboardFusion等) 没有适配的 Linux/ARM64 版本；Linux 侧方案（CopyQ、GPaste）在kylin中适配版本对图片、文件支持不佳；系统自带的通知栏剪贴板功能简陋;
 - 办公中最常用的"复制 → 找历史 → 再粘贴"这件事，恰恰是信创环境里体验缺口最大的。
 
-KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——以麒麟 V10 SP1 自带的 WebKitGTK 2.28 基线构建，UI 与交互按国产桌面（UKUI）的真实问题逐一适配，同时提供 macOS 版本方便开发预览。
+KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——以麒麟 V10 自带的 WebKitGTK 2.28 基线构建，UI 与交互按国产桌面（UKUI）的真实问题逐一适配，同时提供 macOS 版本方便开发预览。
 
-参考运行目标（银河麒麟桌面操作系统 V10）：
+参考系统信息（银河麒麟桌面操作系统 V10）：
 
 ![银河麒麟桌面操作系统 V10 SP1](docs/screenshots/kylin-os.png)
 
