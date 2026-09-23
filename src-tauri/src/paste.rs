@@ -247,16 +247,25 @@ fn write_clipboard(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String>
     clipboard_service::with_writer(|ctx| match rec.kind.as_str() {
         // 旧版本存储的文件条目是 file:// + 百分号编码的 URI,归一化为本地路径:
         // set_files 写出的 text/plain 才是真实路径(OA 类应用据此弹上传框)
-        "files" => ctx
-            .set_files(
-                rec.files
-                    .clone()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|f| clipboard_service::normalize_file_entry(f))
-                    .collect(),
-            )
-            .map_err(|e| format!("写入文件列表失败: {e}")),
+        "files" => {
+            let files: Vec<String> = rec
+                .files
+                .clone()
+                .unwrap_or_default()
+                .iter()
+                .map(|f| clipboard_service::normalize_file_entry(f))
+                .collect();
+            #[cfg(target_os = "linux")]
+            {
+                // Linux:uri-list/gnome(文件通道)+ UTF8_STRING 写 file:// URI(OA 上传触发)
+                ctx.set(clipboard_service::file_clipboard_payload(&files))
+                    .map_err(|e| format!("写入文件列表失败: {e}"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                ctx.set_files(files).map_err(|e| format!("写入文件列表失败: {e}"))
+            }
+        }
         "image" => {
             let img = crate::clipboard_service::load_image(
                 app,
@@ -265,14 +274,16 @@ fn write_clipboard(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String>
             // "复制图片文件"来的记录额外带着原始路径:把文件列表一起写进剪贴板,
             // 这样粘到文件管理器还是文件、粘到文档/聊天还是图片
             match rec.files.as_deref().filter(|files| !files.is_empty()) {
-                Some(files) => ctx
-                    .set(vec![
-                        ClipboardContent::Image(img),
-                        ClipboardContent::Files(
-                            files.iter().map(|f| clipboard_service::normalize_file_entry(f)).collect(),
-                        ),
-                    ])
-                    .map_err(|e| format!("写入图片与文件失败: {e}")),
+                Some(files) => {
+                    let files: Vec<String> =
+                        files.iter().map(|f| clipboard_service::normalize_file_entry(f)).collect();
+                    let mut contents = vec![ClipboardContent::Image(img)];
+                    #[cfg(target_os = "linux")]
+                    contents.extend(clipboard_service::file_clipboard_payload(&files));
+                    #[cfg(not(target_os = "linux"))]
+                    contents.push(ClipboardContent::Files(files));
+                    ctx.set(contents).map_err(|e| format!("写入图片与文件失败: {e}"))
+                }
                 None => ctx.set_image(img).map_err(|e| format!("写入图片失败: {e}")),
             }
         }

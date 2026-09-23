@@ -209,6 +209,42 @@ pub(crate) fn normalize_file_entry(entry: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// 本地路径 → 百分号编码的 file:// URI。
+/// set_files 对 file:// 开头的条目原样保留,所以编码由我们负责:
+/// 中文/空格路径不编码的话,严格解析 URI 的应用会拒绝。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn file_uri(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("file://") {
+        return format!("file://{rest}");
+    }
+    let mut out = String::from("file://");
+    for &b in path.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// 文件类剪贴板内容(Linux):
+/// - `text/uri-list` + `x-special/gnome-copied-files`:标准文件粘贴通道(文件管理器读这两个)
+/// - `UTF8_STRING` 写成 file:// URI:OA 类客户端读文本目标,**以 file:// 开头才触发
+///   "上传文件"**,裸路径只会被当成普通文本(1.1.0 在麒麟 OA 上实测)
+/// 注意 set() 的服务端按"第一个匹配 atom"应答,所以 Text 必须排在 Files 前面,
+/// 让 UTF8_STRING 命中 file:// URI 而不是 Files 附带的裸路径。
+#[cfg(target_os = "linux")]
+pub(crate) fn file_clipboard_payload(paths: &[String]) -> Vec<clipboard_rs::ClipboardContent> {
+    use clipboard_rs::ClipboardContent;
+    let uri_text = paths.iter().map(|p| file_uri(p)).collect::<Vec<_>>().join("\r\n");
+    vec![
+        ClipboardContent::Text(uri_text),
+        ClipboardContent::Files(paths.to_vec()),
+    ]
+}
+
 /// 组装一条文字/富文本记录:文本给标题,富文本留着粘贴成带格式的内容
 fn text_record(
     html: Option<String>,
@@ -269,6 +305,15 @@ mod tests {
         assert!(html_has_visible_text("<p class=MsoNormal>你好 world</p>"));
         assert!(html_has_visible_text("<table><tr><td>42</td></tr></table>"));
         assert!(html_has_visible_text("没有标签的纯文本片段"));
+    }
+
+    /// file:// URI 编码:中文/空格正确转义,已是 URI 的原样保留
+    #[test]
+    fn file_uri_encoding() {
+        use super::file_uri;
+        assert_eq!(file_uri("/home/u/新建.docx"), "file:///home/u/%E6%96%B0%E5%BB%BA.docx");
+        assert_eq!(file_uri("/tmp/a b.png"), "file:///tmp/a%20b.png");
+        assert_eq!(file_uri("file:///already/encoded"), "file:///already/encoded");
     }
 
     /// 文件条目归一化:file:// 前缀与百分号编码还原为本地路径(含中文/空格)
