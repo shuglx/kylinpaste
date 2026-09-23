@@ -1,4 +1,3 @@
-# 麒麟剪贴板
 
 ![Header](https://capsule-render.vercel.app/api?type=waving&color=gradient&height=170&text=KylinPaste&fontSize=58&animation=fadeIn)
 
