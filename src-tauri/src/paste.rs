@@ -74,16 +74,13 @@ fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
     klog!("[粘贴] 剪贴板已写入");
 
     // 2. 隐藏窗口,把焦点让出去。
-    //    置顶(钉住)时**不隐藏**:界面留在原地方便连续粘贴多条;但焦点仍要归还,
-    //    否则注入的快捷键会打进我们自己的窗口(restore_focus 里的显式激活负责这事)。
-    //    另外隐藏再显示会让 UKUI 等桌面丢弃置顶状态,能不藏就不藏。
-    if crate::is_always_on_top() {
-        klog!("[粘贴] 窗口已置顶:保持显示,仅归还焦点后注入");
-    } else {
-        crate::hide_main(app);
-        let hidden = wait_until_hidden(app, Duration::from_millis(800));
-        klog!("[粘贴] 主窗口已隐藏: {hidden}");
-    }
+    //    置顶(钉住)时也必须短暂隐藏:目标应用要拿到键盘焦点才能接收注入的快捷键,
+    //    "保持显示只归还焦点"在 macOS(应用激活态)与 UKUI(拒绝切换焦点)上都不可靠;
+    //    粘贴完成后再把窗口请回来(见步骤 5),用户看到的是一次短暂闪烁。
+    //    这同时避开了 UKUI 重映射丢置顶的坑(呼出路径会补发 ABOVE)。
+    crate::hide_main(app);
+    let hidden = wait_until_hidden(app, Duration::from_millis(800));
+    klog!("[粘贴] 主窗口已隐藏: {hidden}");
 
     // 3. 确保焦点落回"唤起剪贴板之前的那个窗口"
     restore_focus();
@@ -112,6 +109,14 @@ fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
     // 4. 注入粘贴快捷键(macOS 是 ⌘V,其余平台 Ctrl+V)
     simulate_paste()?;
     klog!("[粘贴] 粘贴快捷键已发送");
+
+    // 5. 置顶模式:给目标应用留一点处理按键的时间,然后把窗口恢复显示。
+    //    show_main 在 Linux 上会顺带补发 ABOVE,修复 UKUI 重映射丢置顶的问题。
+    if crate::is_always_on_top() {
+        std::thread::sleep(Duration::from_millis(250));
+        crate::show_main(app);
+        klog!("[粘贴] 置顶模式:窗口已恢复显示");
+    }
     Ok(())
 }
 
