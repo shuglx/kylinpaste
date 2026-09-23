@@ -34,6 +34,8 @@ pub struct Settings {
     pub quick_paste: bool,
     /// 窗口底色不透明度(50-100):界面据此改写 CSS 变量 --bg
     pub opacity: u8,
+    /// 主题:light | dark | system(跟随系统深浅色)
+    pub theme: String,
 }
 
 /// 默认热键:Ctrl+Shift+V(mac 上按习惯用 Cmd+Shift+V)
@@ -53,6 +55,7 @@ impl Default for Settings {
             language: "zh".to_string(),
             quick_paste: true,
             opacity: 90,
+            theme: "system".to_string(),
         }
     }
 }
@@ -91,8 +94,8 @@ pub fn start(app: &AppHandle) {
     state::set_max_items(current.max_items);
     save();
     println!(
-        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}%",
-        current.hotkey, current.max_items, current.language, current.quick_paste, current.opacity
+        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={}",
+        current.hotkey, current.max_items, current.language, current.quick_paste, current.opacity, current.theme
     );
 }
 
@@ -104,6 +107,9 @@ fn sanitize(mut settings: Settings) -> Settings {
     }
     settings.max_items = settings.max_items.clamp(MIN_ITEMS, MAX_ITEMS);
     settings.opacity = settings.opacity.clamp(MIN_OPACITY, MAX_OPACITY);
+    if !matches!(settings.theme.as_str(), "light" | "dark" | "system") {
+        settings.theme = "system".to_string();
+    }
     if settings.language != "en" {
         settings.language = "zh".to_string();
     }
@@ -151,12 +157,13 @@ pub fn cmd_set_settings(app: AppHandle, settings: Settings) -> Result<Settings, 
     }
 
     klog!(
-        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}%",
+        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={}",
         next.hotkey,
         next.max_items,
         next.language,
         next.quick_paste,
-        next.opacity
+        next.opacity,
+        next.theme
     );
     Ok(next)
 }

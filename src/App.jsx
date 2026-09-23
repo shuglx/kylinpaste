@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS = {
   language: 'zh',
   quick_paste: true,
   opacity: 90,
+  theme: 'system',
 };
 
 /** 分组配色:mac 标签那 7 个颜色(从截图上取样得到),循环使用。
@@ -191,13 +192,31 @@ export default function App() {
   const t = useMemo(() => translations((settings || DEFAULT_SETTINGS).language), [settings]);
   const quickPaste = (settings || DEFAULT_SETTINGS).quick_paste;
 
-  // 窗口底色不透明度(设置-常规-外观):改写根节点的 --bg 变量,CSS 里的值只是缺省
+  // 外观:透明度写进 --bg-alpha(CSS 按 theme 合成 --bg,暗色下换成深色底)
   useEffect(() => {
-    const opacity = (settings || DEFAULT_SETTINGS).opacity;
-    document.documentElement.style.setProperty(
-      '--bg',
-      `rgba(255, 255, 255, ${Math.min(100, Math.max(50, opacity || 90)) / 100})`
-    );
+    const opacity = Math.min(100, Math.max(75, (settings || DEFAULT_SETTINGS).opacity || 90));
+    document.documentElement.style.setProperty('--bg-alpha', String(opacity / 100));
+  }, [settings]);
+
+  // 主题:浅色 / 深色 / 跟随系统(引擎不支持 prefers-color-scheme 时按浅色)
+  useEffect(() => {
+    const pref = (settings || DEFAULT_SETTINGS).theme || 'system';
+    const mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    const apply = () => {
+      const dark = pref === 'dark' || (pref === 'system' && mq && mq.matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    };
+    apply();
+    if (mq) {
+      // 老 WebKitGTK 只有 addListener
+      if (mq.addEventListener) mq.addEventListener('change', apply);
+      else if (mq.addListener) mq.addListener(apply);
+      return () => {
+        if (mq.removeEventListener) mq.removeEventListener('change', apply);
+        else if (mq.removeListener) mq.removeListener(apply);
+      };
+    }
+    return undefined;
   }, [settings]);
 
   // 初始加载(含旧版 localStorage 收藏的一次性迁移)+ 订阅剪贴板更新事件

@@ -3,7 +3,7 @@
 :root {
   /* 半透明底色:窗口微微透出后面一点(mac/麒麟的窗口本身都是 transparent 的,
      圆角与外框仍由 .app 自绘);弹层/菜单仍是不透明的 #fff,保证可读性 */
-  --bg: rgba(255, 255, 255, 0.9);
+  --bg: rgba(255, 255, 255, var(--bg-alpha));
   --text: #16181d;
   --muted: #8b8f98;
   --muted-2: #a9aeb8;
@@ -12,7 +12,83 @@
   --chip-text: #4b5057;
   --hover: #f4f5f7;
   --line: #ededf0;
+  /* 半透明底色的透明度由设置(外观-窗口透明度)改写,--bg 按 theme 合成 */
+  --bg-alpha: 0.9;
+  /* 表面/边框/图标等语义色:暗色主题在 [data-theme='dark'] 里整体覆盖 */
+  --surface: #fff;       /* 卡片、菜单、输入框、弹窗、开关圆点 */
+  --surface-2: #f7f7f9;  /* 设置侧栏、卡片底 */
+  --surface-3: #eceef1;  /* 侧栏项/下拉 hover */
+  --row-hover: #f0f1f4;  /* 记录行 hover */
+  --line-2: #e2e4e8;     /* 较强边框:输入框、按钮描边、滑条轨道 */
+  --text-2: #5b6169;     /* 次级文字:缩略图字、tag-chip、菜单项 */
+  --text-3: #6b7078;     /* 再次级:幽灵按钮、分组标签文字 */
+  --icon-dim: #b9bdc6;   /* 搜索图标/占位符、图标按钮 */
+  --icon-idle: #c8ccd3;  /* 星标/行按钮未悬停 */
+  --icon-hover: #9aa0a8;
+  --scrollbar: #d9dbe0;
+  --idle: #d7dae0;       /* 分组圆点、开关底、热键 hover 描边 */
+  --hover-2: #dcdee3;    /* 说明按钮 hover */
+  --accent-border: #b9d2ff; /* 输入框聚焦描边 */
   color-scheme: light;
+}
+
+/* 暗色主题:覆盖语义 token;彩色点缀(分类/警告/错误)单独覆盖 */
+:root[data-theme='dark'] {
+  --bg: rgba(30, 32, 38, var(--bg-alpha));
+  --text: #e8eaee;
+  --muted: #989ea9;
+  --muted-2: #6d737e;
+  --accent: #3f83f8;
+  --chip-bg: #2b2e35;
+  --chip-text: #c3c8d0;
+  --hover: #2b2e35;
+  --line: #34373e;
+  --surface: #26282e;
+  --surface-2: #1f2127;
+  --surface-3: #2e3238;
+  --row-hover: #262930;
+  --line-2: #3e424a;
+  --text-2: #b6bbc4;
+  --text-3: #a7adb8;
+  --icon-dim: #5d626c;
+  --icon-idle: #4a4f58;
+  --icon-hover: #8f95a0;
+  --scrollbar: #3d4148;
+  --idle: #454a52;
+  --hover-2: #3a3e46;
+  --accent-border: #3f6fd9;
+  color-scheme: dark;
+}
+
+/* 暗色主题下彩色点缀改为"彩色半透明底 + 亮色字" */
+:root[data-theme='dark'] .thumb.t-text,
+:root[data-theme='dark'] .thumb.t-html,
+:root[data-theme='dark'] .thumb.t-image {
+  background: rgba(25, 158, 74, 0.18);
+  color: #5ecf85;
+}
+:root[data-theme='dark'] .thumb.t-link {
+  background: rgba(122, 90, 245, 0.22);
+  color: #ab90ff;
+}
+:root[data-theme='dark'] .thumb.t-files {
+  background: rgba(224, 138, 25, 0.18);
+  color: #f0a24b;
+}
+:root[data-theme='dark'] .errorbar {
+  background: rgba(224, 67, 63, 0.16);
+  border-color: rgba(224, 67, 63, 0.4);
+  color: #ff8d89;
+}
+:root[data-theme='dark'] .hotkey-warn {
+  border-color: rgba(224, 67, 63, 0.4);
+  background: rgba(224, 67, 63, 0.12);
+  color: #ff8d89;
+}
+:root[data-theme='dark'] .hotkey-warn.soft {
+  border-color: rgba(214, 143, 22, 0.4);
+  background: rgba(214, 143, 22, 0.12);
+  color: #e8b25c;
 }
 
 * {
@@ -91,7 +167,7 @@ button:focus,
 
 .search > svg { margin-right: 12px; }
 .search > svg {
-  color: #b9bdc6;
+  color: var(--icon-dim);
   flex: 0 0 auto;
 }
 
@@ -107,7 +183,7 @@ button:focus,
   padding: 5px 0;
 }
 .search input::placeholder {
-  color: #b9bdc6;
+  color: var(--icon-dim);
 }
 
 .icon-btn {
@@ -117,7 +193,7 @@ button:focus,
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #b0b5bd;
+  color: var(--icon-dim);
   padding: 0;
   line-height: 36px;
   text-align: center;
@@ -158,7 +234,7 @@ button:focus,
   color: var(--chip-text);
 }
 .chip:hover {
-  background: #e8e9ec;
+  background: var(--surface-3);
 }
 .chip.on {
   background: var(--accent);
@@ -176,7 +252,7 @@ button:focus,
   width: 8px;
 }
 .list::-webkit-scrollbar-thumb {
-  background: #d9dbe0;
+  background: var(--scrollbar);
   border-radius: 4px;
 }
 
@@ -205,8 +281,8 @@ button:focus,
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f1f2f4;
-  color: #5b6169;
+  background: var(--chip-bg);
+  color: var(--text-2);
 }
 
 /* 图片类记录:铺满这一格,按正方形裁切(图片本体比例不变)。
@@ -216,7 +292,7 @@ button:focus,
    裁切放在内层 .thumb-clip 上——数字角标是 .thumb 的子元素且带负偏移,
    直接把 overflow:hidden 放在 .thumb 上会把角标切掉一块 */
 .thumb.has-img {
-  background: #f4f5f7;
+  background: var(--hover);
 }
 .thumb-clip {
   position: absolute;
@@ -311,10 +387,10 @@ button:focus,
   align-items: center;
   max-width: 130px;
   padding: 1px 8px 1px 6px;
-  border: 1px solid #e6e7eb;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fafafb;
-  color: #6b7078;
+  background: var(--chip-bg);
+  color: var(--text-3);
   font-size: 11.5px;
   line-height: 17px;
   overflow: hidden;
@@ -331,7 +407,7 @@ button:focus,
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #d7dae0;
+  background: var(--idle);
 }
 /* 圆点与文字之间留白(容器里是"元素 + 裸文本",用兄弟 margin 选不到文本) */
 .group-pill .dot {
@@ -353,7 +429,7 @@ button:focus,
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #c8ccd3;
+  color: var(--icon-idle);
   padding: 0;
   line-height: 26px;
   text-align: center;
@@ -363,7 +439,7 @@ button:focus,
 .star > svg { vertical-align: middle; }
 .star:hover {
   background: var(--hover);
-  color: #9aa0a8;
+  color: var(--icon-hover);
 }
 .star.on {
   color: var(--accent);
@@ -385,7 +461,7 @@ button:focus,
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #c8ccd3;
+  color: var(--icon-idle);
   padding: 0;
   line-height: 26px;
   text-align: center;
@@ -395,7 +471,7 @@ button:focus,
 .row-btn > svg { vertical-align: middle; }
 .row-btn:hover {
   background: var(--hover);
-  color: #9aa0a8;
+  color: var(--icon-hover);
 }
 .row-btn.on {
   color: var(--accent);
@@ -417,7 +493,7 @@ button:focus,
 }
 .chip-group > svg {
   flex: 0 0 auto;
-  color: #9aa0a8;
+  color: var(--icon-hover);
 }
 .chip-group-text {
   flex: 1 1 auto;
@@ -477,9 +553,9 @@ button:focus,
   max-height: 260px;
   overflow-y: auto;
   padding: 4px;
-  border: 1px solid #e8e9ec;
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 10px 30px rgba(20, 22, 26, 0.14);
 }
 .menu-item {
@@ -492,7 +568,7 @@ button:focus,
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #2c2f34;
+  color: var(--text);
   font-size: 12.5px;
   line-height: 26px;
   text-align: left;
@@ -550,24 +626,24 @@ button:focus,
   z-index: 40;
   width: 232px;
   padding: 10px;
-  border: 1px solid #e8e9ec;
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 10px 30px rgba(20, 22, 26, 0.14);
 }
 .tag-input {
   width: 100%;
   padding: 7px 9px;
-  border: 1px solid #e2e4e8;
+  border: 1px solid var(--line-2);
   border-radius: 8px;
   outline: 0;
-  background: #fff;
+  background: var(--surface);
   font: inherit;
   font-size: 13px;
   color: var(--text);
 }
 .tag-input:focus {
-  border-color: #b9d2ff;
+  border-color: var(--accent-border);
   box-shadow: 0 0 0 3px rgba(10, 107, 255, 0.1);
 }
 .tag-known {
@@ -582,10 +658,10 @@ button:focus,
   display: inline-block;
   max-width: 100%;
   padding: 3px 9px;
-  border: 1px solid #e6e7eb;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: #fafafb;
-  color: #5b6169;
+  background: var(--chip-bg);
+  color: var(--text-2);
   font-size: 12px;
   line-height: 18px;
   overflow: hidden;
@@ -626,8 +702,8 @@ button:focus,
 }
 .btn.ghost {
   background: transparent;
-  border-color: #e2e4e8;
-  color: #6b7078;
+  border-color: var(--line-2);
+  color: var(--text-3);
 }
 .btn.ghost:hover {
   background: var(--hover);
@@ -647,14 +723,15 @@ button:focus,
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(22, 24, 29, 0.28);
+  /* 不再压暗背景:弹窗本体有阴影,遮罩只负责接收点击关闭 */
+  background: transparent;
 }
 .modal {
   width: 100%;
   max-width: 330px;
   padding: 18px;
   border-radius: 14px;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 18px 50px rgba(16, 18, 22, 0.22);
 }
 .modal-title {
@@ -686,7 +763,7 @@ button:focus,
   flex: 0 0 auto;
   width: 152px;
   padding: 14px 10px;
-  background: #f7f7f9;
+  background: var(--surface-2);
   border-right: 1px solid var(--line);
   display: flex;
   flex-direction: column;
@@ -700,7 +777,7 @@ button:focus,
   border: 0;
   border-radius: 9px;
   background: transparent;
-  color: #4b5057;
+  color: var(--chip-text);
   font-size: 13.5px;
   text-align: left;
 }
@@ -708,10 +785,10 @@ button:focus,
 .side-item > svg { margin-right: 9px; }
 .side-item svg {
   flex: 0 0 auto;
-  color: #7d838c;
+  color: var(--muted);
 }
 .side-item:hover {
-  background: #eceef1;
+  background: var(--surface-3);
 }
 .side-item.on,
 .side-item.on,
@@ -753,7 +830,7 @@ button:focus,
   width: 8px;
 }
 .pane-body::-webkit-scrollbar-thumb {
-  background: #d9dbe0;
+  background: var(--scrollbar);
   border-radius: 4px;
 }
 
@@ -766,12 +843,12 @@ button:focus,
 
 .card {
   border-radius: 12px;
-  background: #f7f7f9;
+  background: var(--surface-2);
   overflow: hidden;
 }
 
 .row-block + .row-block {
-  border-top: 1px solid #eceef1;
+  border-top: 1px solid var(--line);
 }
 .row {
   display: flex;
@@ -816,14 +893,14 @@ button:focus,
   width: 15px;
   height: 15px;
   border-radius: 50%;
-  background: #e6e7eb;
-  color: #8b8f98;
+  background: var(--line-2);
+  color: var(--muted);
   font-size: 10px;
   line-height: 1;
   cursor: pointer;
 }
 .hint-btn:hover {
-  background: #dcdee3;
+  background: var(--hover-2);
 }
 .hint-btn.on {
   background: var(--accent);
@@ -844,7 +921,7 @@ button:focus,
   align-items: center;
 }
 button.row:hover {
-  background: #f0f1f4;
+  background: var(--row-hover);
 }
 .link-value {
   display: inline-flex;
@@ -863,7 +940,7 @@ button.row:hover {
   height: 24px;
   border: 0;
   border-radius: 999px;
-  background: #d7dae0;
+  background: var(--idle);
   transition: background 0.15s;
 }
 .switch i {
@@ -873,7 +950,7 @@ button.row:hover {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--surface);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
   transition: transform 0.15s;
 }
@@ -898,7 +975,7 @@ button.row:hover {
 
 /* 下拉选择 */ .select > * + * { margin-left: 5px; }
 .select:hover {
-  background: #eceef1;
+  background: var(--surface-3);
   color: var(--text);
 }
 .select svg {
@@ -915,15 +992,15 @@ button.row:hover {
 /* 快捷键录入 */ .hotkey-cell > * + * { margin-top: 3px; }
 .hotkey {
   padding: 4px 10px;
-  border: 1px solid #e2e4e8;
+  border: 1px solid var(--line-2);
   border-radius: 7px;
-  background: #fff;
+  background: var(--surface);
   color: var(--text);
   font-size: 12.5px;
   white-space: nowrap;
 }
 .hotkey:hover {
-  border-color: #cdd2da;
+  border-color: var(--idle);
 }
 .hotkey.on {
   border-color: var(--accent);
@@ -951,7 +1028,7 @@ button.row:hover {
 }
 .hotkey-warn-tip {
   margin-top: 4px;
-  color: #8b8f98;
+  color: var(--muted);
 }
 /* 设置页外观:透明度滑条 */
 .opacity-row {
@@ -971,7 +1048,7 @@ button.row:hover {
 .opacity-row input[type='range']::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 2px;
-  background: #e2e4e8;
+  background: var(--line-2);
 }
 .opacity-row input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;

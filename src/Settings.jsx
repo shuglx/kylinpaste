@@ -261,10 +261,7 @@ export default function Settings({
   const commitTimer = useRef(null);
   const previewOpacity = (value) => {
     setOpacity(value);
-    document.documentElement.style.setProperty(
-      '--bg',
-      `rgba(255, 255, 255, ${value / 100})`
-    );
+    document.documentElement.style.setProperty('--bg-alpha', String(value / 100));
     if (commitTimer.current) clearTimeout(commitTimer.current);
     commitTimer.current = setTimeout(() => commit({ opacity: value }), 350);
   };
@@ -419,6 +416,17 @@ export default function Settings({
 
               <div className="group-title">{t.sectionAppearance}</div>
               <div className="card">
+                <Row label={t.theme}>
+                  <Select
+                    value={settings.theme || 'system'}
+                    options={[
+                      { value: 'light', label: t.themeLight },
+                      { value: 'dark', label: t.themeDark },
+                      { value: 'system', label: t.themeSystem },
+                    ]}
+                    onChange={(value) => commit({ theme: value })}
+                  />
+                </Row>
                 <Row label={t.opacity}>
                   <div className="opacity-row">
                     <input
