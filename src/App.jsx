@@ -14,10 +14,10 @@ import {
   IconPin,
   IconSearch,
   IconStar,
-  IconClipboardText,
   IconClose,
   IconEye,
-  IconFolderOpen,
+  IconFileSymlink,
+  IconLetterT,
   IconTag,
   IconTrash,
 } from './icons.jsx';
@@ -395,9 +395,9 @@ export default function App() {
   const specialIcon = (rec) => {
     const kind = kindTone(rec);
     if (kind === 'image') return <IconEye />;
-    if (kind === 'files') return <IconFolderOpen />;
+    if (kind === 'files') return <IconFileSymlink />;
     if (kind === 'link') return <IconLink />;
-    return <IconClipboardText />;
+    return <IconLetterT />;
   };
 
   const runSpecial = (rec) => {

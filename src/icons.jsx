@@ -85,21 +85,21 @@ export const IconEye = () => (
   </svg>
 );
 
-/* Tabler "clipboard-text":文字/富文本的特殊操作 —— 粘贴纯文本 */
-export const IconClipboardText = () => (
+/* Tabler "letter-t":文字/富文本的特殊操作 —— 粘贴纯文本 */
+export const IconLetterT = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
-    <path d="M9 5h-2a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-12a2 2 0 0 0 -2 -2h-2" />
-    <path d="M9 3m0 2a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v0a2 2 0 0 1 -2 2h-2a2 2 0 0 1 -2 -2z" />
-    <path d="M9 12h6" />
-    <path d="M9 16h6" />
+    <path d="M6 4l12 0" />
+    <path d="M12 4l0 16" />
   </svg>
 );
 
-/* Tabler "folder-open":文件的特殊操作 —— 在文件管理器中打开 */
-export const IconFolderOpen = () => (
+/* Tabler "file-symlink":文件的特殊操作 —— 在文件管理器中定位/打开 */
+export const IconFileSymlink = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
-    <path d="M5 19l2.757 -7.351a1 1 0 0 1 .936 -.649h12.100a1 1 0 0 1 .936 1.35l-2.757 7.351a1 1 0 0 1 -.936 .649h-12.1a1 1 0 0 1 -.936 -1.35z" />
-    <path d="M9 11v-4a2 2 0 0 1 2 -2h3l2 2h4a2 2 0 0 1 2 2v1" />
+    <path d="M4 21v-4a3 3 0 0 1 3 -3h5" />
+    <path d="M9 17l3 -3l-3 -3" />
+    <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+    <path d="M5 11v-6a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2h-9.5" />
   </svg>
 );
 
