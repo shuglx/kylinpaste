@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-deb/
+dist-dmg/
 src-tauri/target/
 target/
 .ci-cache/

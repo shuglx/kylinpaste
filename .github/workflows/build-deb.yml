@@ -129,26 +129,34 @@ jobs:
         run: npm ci
 
       # --bundles 覆盖 tauri.conf.json 里的 targets(那边是给 Linux 的 deb 用的)
-      # 产物:src-tauri/target/release/bundle/{macos/KylinPaste.app,dmg/KylinPaste_*.dmg}
-      - name: Build app + dmg (arm64)
-        run: npx tauri build --bundles app,dmg
+      # 只出 .app:dmg 交给 package-dmg.sh —— Tauri v1 不签 bundle,
+      # 直接用它出的 dmg 会带一个 verify 失败的 linker 签名(用户看到"已损坏")
+      # 产物:src-tauri/target/release/bundle/macos/KylinPaste.app
+      - name: Build app (arm64)
+        run: npx tauri build --bundles app
+
+      # ad-hoc 签名 + 校验 + 打 dmg,产物 dist-dmg/KylinPaste_<version>_aarch64.dmg
+      - name: Sign & package dmg
+        run: |
+          chmod +x scripts/package-dmg.sh
+          ./scripts/package-dmg.sh
 
       - name: Show artifacts
         run: |
           ls -lh src-tauri/target/release/bundle/macos/ || true
-          ls -lh src-tauri/target/release/bundle/dmg/ || true
+          ls -lh dist-dmg/*.dmg || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: kylinpaste-macos-arm64-dmg
-          path: src-tauri/target/release/bundle/dmg/*.dmg
+          path: dist-dmg/*.dmg
 
       # tag 时把 dmg 一起附到同一个 Release(不重复生成 release notes)
       - name: Attach dmg to Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/target/release/bundle/dmg/*.dmg
+          files: dist-dmg/*.dmg
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

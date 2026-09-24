@@ -61,15 +61,22 @@ KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——�
 **银河麒麟 / Ubuntu（ARM64）**
 
 ```bash
-sudo dpkg -i kylinpaste_0.2.8_arm64.deb
+sudo dpkg -i kylinpaste_1.5.1_arm64.deb
 # 依赖 WebKitGTK 4.1(麒麟 V10 SP1 自带),如缺依赖可执行: sudo apt -f install
 ```
 
 **macOS（Apple Silicon）**
 
 1. 打开 `KylinPaste_x.y.z_aarch64.dmg`，拖入「应用程序」；
-2. 首次运行：右键 → 打开（应用未签名）；
-3. 粘贴功能需在 系统设置 → 隐私与安全性 → 辅助功能 中授权。
+2. 个人开发没买Apple开发者认证，首次运行需要放行（提示"已损坏"、"未签名"等）。
+   在「终端」执行以下命令移除隔离属性后即可正常启动：
+
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/KylinPaste.app
+   ```
+
+   也可尝试：右键（或 Control + 单击）图标 → 打开 → 在弹窗中再次点「打开」；若系统仍提示已损坏，请使用上面的命令。
+3. 粘贴功能需在 系统设置 → 隐私与安全性 → 辅助功能 中授权（将 KylinPaste 加入并勾选）。
 
 ## 从源码构建
 
@@ -77,10 +84,15 @@ sudo dpkg -i kylinpaste_0.2.8_arm64.deb
 npm install
 npm run tauri:dev      # 开发调试
 npm run tauri:build    # 本地出包
+
+# macOS 出 dmg：比 tauri build 多一步 bundle 级 ad-hoc 签名(见 scripts/package-dmg.sh)
+npx tauri build --bundles app && ./scripts/package-dmg.sh
 ```
 
 > Linux 构建基于 Ubuntu 20.04(focal) 容器（`docker/Dockerfile.build`），将 webkit2gtk 锁定在
 > 2.28.1 与麒麟机的 glibc/WebKitGTK 基线对齐，保证产物在目标机可直接运行；CI 会同时产出 deb 与 dmg。
+> macOS 侧 Tauri v1 不签 .app，直接用它出的 dmg 会带一个 `codesign --verify` 失败的临时签名，
+> Gatekeeper 会报"已损坏"且无放行入口，故 dmg 统一由 `scripts/package-dmg.sh` 签名后再打。
 
 ## 数据与隐私
 
