@@ -134,6 +134,14 @@ export const IconInfo = () => (
   </svg>
 );
 
+/** 退出应用(设置侧栏底部):Tabler `power` */
+export const IconPower = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
+    <path d="M7 6a7.75 7.75 0 1 0 10 0" />
+    <path d="M12 4l0 8" />
+  </svg>
+);
+
 /** 外链:Tabler `external-link` */
 export const IconExternalLink = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" {...iconStroke} strokeWidth={2.2}>

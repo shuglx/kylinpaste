@@ -479,10 +479,20 @@ button:focus,
   font-size: 0;
 }
 
-/* 设置页侧栏底部:退出应用(左下角,红色,吸底不贴选项卡) */
+/* 设置页侧栏底部:退出应用(左下角,红色,吸底不贴选项卡)
+   左内边距与 .side-item 保持一致,让 icon 与上面 3 个页签的 icon 在同一条竖线上 */
 .settings .side .side-quit {
   width: 100%;
   margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-left: 22px;
+  gap: 7px;
+}
+
+.side-quit > svg {
+  flex: 0 0 auto;
 }
 
 .row-btn > svg { vertical-align: middle; }
@@ -800,7 +810,9 @@ button:focus,
 .side-item {
   display: flex;
   align-items: center;
-  padding: 8px 10px;
+  /* 整体比原来往右挪一点(左内边距 10 → 22px),但不做真正居中 ——
+     侧栏偏窄,居中后内容会明显偏右;左对齐还能保证三项图标列严格对齐 */
+  padding: 8px 10px 8px 22px;
   border: 0;
   border-radius: 9px;
   background: transparent;

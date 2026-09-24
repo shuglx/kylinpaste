@@ -7,6 +7,7 @@ import {
   IconDoc,
   IconExternalLink,
   IconInfo,
+  IconPower,
   IconSliders,
 } from './icons.jsx';
 
@@ -377,6 +378,7 @@ export default function Settings({
           className="btn danger side-quit"
           onClick={() => setQuitConfirm(true)}
         >
+          <IconPower />
           {t.quitApp}
         </button>
       </aside>
