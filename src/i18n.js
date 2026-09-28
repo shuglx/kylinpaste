@@ -126,25 +126,40 @@ const zh = {
   version: '版本',
   githubRepo: 'GitHub 仓库',
 
-  // 使用方法(顶栏"?"按钮)
+  // 使用方法(顶栏"?"按钮):每个章节一张表格,左列是快捷键/图标,右列是说明
   help: '使用方法',
   helpTitle: '使用方法',
-  helpHint: '快捷键已按当前系统和你的绑定显示',
+
   helpSecOpen: '唤出与收起',
   helpSecPick: '选择与粘贴',
-  helpSecMouse: '鼠标与其他',
+  helpSecTop: '顶部功能',
+  helpSecItem: '条目功能',
+
+  // 唤出与收起 / 选择与粘贴:左列是快捷键
   helpRowHotkey: '显示 / 隐藏窗口',
   helpRowEsc: '收起窗口',
   helpRowArrows: '在记录之间上下移动选择，也支持滚轮',
   helpRowEnter: '粘贴当前选中的记录（等同于鼠标点击）',
   helpRowQuick: (alt) => `按住 ${alt} 再按 1~9，粘贴对应序号记录`,
-  helpQuickOff: '便捷粘贴已关闭；需要的话在 设置 → 常规 里打开。',
+  helpQuickOff: '便捷粘贴已关闭；需要的话在 设置 → 常规 里打开',
   helpKeyEnter: '回车',
-  helpClick: '点击任意记录即可粘贴到上一个应用。',
-  helpRowBtns: '每条记录尾部有四个按钮：特殊操作、分组、收藏、删除。',
-  helpSpecial:
-    '特殊操作随类型变化：文字＝粘贴纯文本，图片＝预览，文件＝打开所在目录，链接＝浏览器中打开。',
-  helpTopBtns: '顶部图标：图钉＝置顶，扫帚＝清理临时记录，"?"＝使用方法，齿轮＝设置。',
+
+  // 顶部功能:左列是图标,这几条只作图标的 title(右列复用 pin/cleanTip/settings/help)
+  helpTopPin: '图钉',
+  helpTopClean: '扫帚',
+  helpTopHelp: '?',
+  helpTopGear: '齿轮',
+
+  // 条目功能:左列是条目上的按钮图标,这几条同样只作 title
+  helpItemSpecial: '特殊操作',
+  helpItemSpecialTip:
+    '文字＝粘贴纯文本，图片＝预览，文件＝打开所在目录，链接＝浏览器中打开',
+  helpItemGroup: '分组',
+  helpItemGroupTip: '给记录设置分组',
+  helpItemFav: '收藏',
+  helpItemFavTip: '收藏 / 取消收藏',
+  helpItemDel: '删除',
+  helpItemDelTip: '删除这条记录（已收藏或已分组的会先确认）',
 };
 
 const en = {
@@ -270,26 +285,34 @@ const en = {
 
   help: 'How to use',
   helpTitle: 'How to use',
-  helpHint: 'Shortcuts reflect your system and current binding',
+
   helpSecOpen: 'Show & hide',
   helpSecPick: 'Select & paste',
-  helpSecMouse: 'Mouse & more',
-  helpRowHotkey: 'Show / hide the window (rebind: Settings → General → Shortcut)',
+  helpSecTop: 'Top bar',
+  helpSecItem: 'Records',
+
+  helpRowHotkey: 'Show / hide the window',
   helpRowEsc: 'Hide the window',
-  helpRowArrows: 'Move the selection up / down',
+  helpRowArrows: 'Move the selection up / down; scrolling works too',
   helpRowEnter: 'Paste the selected record (same as clicking it)',
-  helpRowWheel: 'Scrolling also moves the selection.',
-  helpRowQuick: (alt) =>
-    `Hold ${alt} and press 1-9 to paste one of the first nine records (the number badges appear while ${alt} is held)`,
-  helpQuickOff: 'Quick paste is off; turn it on in Settings → General.',
+  helpRowQuick: (alt) => `Hold ${alt} and press 1-9 to paste the record with that number`,
+  helpQuickOff: 'Quick paste is off; turn it on in Settings → General',
   helpKeyEnter: 'Enter',
-  helpClick: 'Click any record to paste it into the previous app.',
-  helpRowBtns: 'Every record has four buttons at the end: special action, group, star, delete.',
-  helpSpecial:
-    'The special action depends on the type: text / rich text = paste as plain text, image = view image, file = reveal in file manager, link = open in browser.',
-  helpTopBtns:
-    'Top icons: pin = keep on top, broom = clear temporary records (starred and grouped ones are kept), "?" = this guide, gear = settings.',
-  helpPrivacy: 'All records and settings stay on this machine — no network transfer.',
+
+  helpTopPin: 'Pin',
+  helpTopClean: 'Broom',
+  helpTopHelp: '?',
+  helpTopGear: 'Gear',
+
+  helpItemSpecial: 'Special action',
+  helpItemSpecialTip:
+    'text = paste as plain text, image = preview, file = open containing folder, link = open in browser',
+  helpItemGroup: 'Group',
+  helpItemGroupTip: 'Assign a group to the record',
+  helpItemFav: 'Star',
+  helpItemFavTip: 'Star / unstar',
+  helpItemDel: 'Delete',
+  helpItemDelTip: 'Delete this record (starred or grouped ones ask for confirmation first)',
 };
 
 const DICTS = { zh, en };

@@ -790,18 +790,31 @@ button:focus,
 
 .modal-actions > * + * { margin-left: 8px; }
 
-/* 使用方法弹窗:内容比确认框长,单独放宽,正文区自己滚动 */
+/* 使用方法弹窗:内容比确认框长,单独放宽,正文区自己滚动。
+   520px 是按"说明不超过 2 行"倒推的:减掉左右内边距 36、键帽列 100、
+   单元格内边距 16 后,说明列还有约 368px(约 29 个汉字/行);
+   最长的一行是英文的"text = paste as plain text, image = preview,
+   file = open containing folder, link = open in browser",正好两行 */
 .modal.help {
-  max-width: 420px;
+  position: relative;
+  max-width: 520px;
   max-height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.help-hint {
-  margin-top: 6px;
-  color: var(--muted);
-  font-size: 12px;
+/* 关闭入口:右上角 ×(不再用底部按钮) */
+.help-close {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 26px;
+  height: 26px;
+  line-height: 26px;
+}
+/* 标题给 × 让位,长标题也不会压到按钮上 */
+.modal.help .modal-title {
+  padding-right: 28px;
 }
 
 .help-body {
@@ -819,30 +832,74 @@ button:focus,
 }
 
 .help-sec {
-  margin-top: 14px;
-  margin-bottom: 7px;
+  margin: 14px 0 4px;
   color: var(--text-3);
   font-size: 12px;
   font-weight: 600;
 }
 /* 第一个小标题紧贴正文上沿,不再多留一段空白 */
-.help-body > .help-sec:first-child { margin-top: 0; }
+.help-body > .help-sec-wrap:first-child .help-sec { margin-top: 0; }
 
-.help-row {
-  display: flex;
-  align-items: flex-start;
-  margin-top: 8px;
+/* 每个章节一张表:左列固定宽(键帽/图标),右列自适应说明。
+   用 table 而不是 flex/grid —— 老 WebKitGTK(麒麟 2.28)上表格的对齐最稳;
+   全边框:外层给 table,border-collapse 让内部相邻边框合并成一条 */
+.help-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border: 1px solid var(--line-2);
   font-size: 12.5px;
-  line-height: 1.65;
 }
 
-.help-keys {
-  flex: 0 0 auto;
-  min-width: 78px;
-  margin-right: 10px;
+.help-key,
+.help-desc {
+  border: 1px solid var(--line-2);
 }
-/* 键帽间距用 margin:老 WebKitGTK(麒麟 2.28)不支持 flex gap */
-.help-keys > * + * { margin-left: 4px; }
+
+.help-key {
+  /* 100px:装得下最宽的左列内容(⌥ + 1~9 两个键帽约 79px,
+     特殊操作那 4 个小图标约 92px),再窄就会被挤到换行 */
+  width: 100px;
+  padding: 5px 8px;
+  vertical-align: middle;
+  text-align: center;
+  /* 键帽/图标各自成行不会断,整体居中 */
+  white-space: nowrap;
+}
+
+/* 键帽间距用 margin:老 WebKitGTK 不支持 flex gap */
+.help-key > * + * { margin-left: 4px; }
+
+/* 图标列(顶部功能/条目功能):图标与顶栏、条目上看到的是同一套 */
+.help-icon {
+  display: inline-block;
+  line-height: 0;
+  color: var(--muted);
+}
+.help-icon svg {
+  width: 18px;
+  height: 18px;
+}
+/* 一格里有多个图标(特殊操作随类型变化,四个并排):小一号,间距用 margin */
+.help-icon svg:not(:only-child) {
+  width: 16px;
+  height: 16px;
+}
+.help-icon svg + svg { margin-left: 4px; }
+
+.help-desc {
+  padding: 5px 8px;
+  vertical-align: middle;
+  text-align: center;
+  color: var(--text-2);
+  line-height: 1.6;
+}
+
+/* 便捷粘贴关闭时的那一行:置灰但仍可读,用来解释"按了没反应" */
+.help-table tr.off .help-key,
+.help-table tr.off .help-desc {
+  color: var(--muted);
+}
 
 .kbd {
   display: inline-block;
@@ -856,12 +913,6 @@ button:focus,
   font-size: 11.5px;
   line-height: 17px;
   text-align: center;
-}
-
-.help-text {
-  flex: 1;
-  min-width: 0;
-  color: var(--text-2);
 }
 
 /* ---------------- 设置界面(左页签 + 右内容卡片) ---------------- */

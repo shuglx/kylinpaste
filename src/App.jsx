@@ -199,23 +199,59 @@ function prettyAccel(accel) {
  */
 function HelpDialog({ t, hotkey, quickPaste, onClose }) {
   const alt = IS_MAC ? '⌥' : 'Alt';
-  const rows = [
-    { sec: t.helpSecOpen },
-    { keys: [prettyAccel(hotkey)], text: t.helpRowHotkey },
-    { keys: ['Esc'], text: t.helpRowEsc },
-    { sec: t.helpSecPick },
-    { keys: ['↑', '↓'], text: t.helpRowArrows },
-    { keys: [t.helpKeyEnter], text: t.helpRowEnter },
-    { text: t.helpRowWheel },
-    quickPaste
-      ? { keys: [alt, '1~9'], text: t.helpRowQuick(alt) }
-      : { text: t.helpQuickOff },
-    { sec: t.helpSecMouse },
-    { text: t.helpClick },
-    { text: t.helpRowBtns },
-    { text: t.helpSpecial },
-    { text: t.helpTopBtns },
-    { text: t.helpPrivacy },
+  /** 每个章节一张表:左列是快捷键(键帽)或按钮图标,右列是说明。
+   *  `off` = 该功能当前关闭,整行置灰 */
+  const sections = [
+    {
+      title: t.helpSecOpen,
+      rows: [
+        { keys: [prettyAccel(hotkey)], text: t.helpRowHotkey },
+        { keys: ['Esc'], text: t.helpRowEsc },
+      ],
+    },
+    {
+      title: t.helpSecPick,
+      rows: [
+        { keys: ['↑', '↓'], text: t.helpRowArrows },
+        { keys: [t.helpKeyEnter], text: t.helpRowEnter },
+        // 便捷粘贴关掉时保留这一行:说明"按了没反应"是开关的问题
+        quickPaste
+          ? { keys: [alt, '1~9'], text: t.helpRowQuick(alt) }
+          : { keys: [alt, '1~9'], text: t.helpQuickOff, off: true },
+      ],
+    },
+    {
+      // 左列用真图标(与顶栏/条目上看到的一致),名称留作 title
+      // 右列直接复用那里自己的 tooltip 文案,鼠标悬停看到的和这里一致
+      title: t.helpSecTop,
+      rows: [
+        { icon: <IconPin />, name: t.helpTopPin, text: t.pin },
+        { icon: <IconClean />, name: t.helpTopClean, text: t.cleanTip },
+        { icon: <IconHelp />, name: t.helpTopHelp, text: t.help },
+        { icon: <IconGear />, name: t.helpTopGear, text: t.settings },
+      ],
+    },
+    {
+      title: t.helpSecItem,
+      rows: [
+        {
+          // 特殊操作的图标随记录类型变化,这里把四种都摆出来
+          icon: (
+            <>
+              <IconLetterT />
+              <IconEye />
+              <IconFileSymlink />
+              <IconLink />
+            </>
+          ),
+          name: t.helpItemSpecial,
+          text: t.helpItemSpecialTip,
+        },
+        { icon: <IconTag />, name: t.helpItemGroup, text: t.helpItemGroupTip },
+        { icon: <IconStar />, name: t.helpItemFav, text: t.helpItemFavTip },
+        { icon: <IconTrash />, name: t.helpItemDel, text: t.helpItemDelTip },
+      ],
+    },
   ];
 
   return (
@@ -225,34 +261,43 @@ function HelpDialog({ t, hotkey, quickPaste, onClose }) {
         onClick={(e) => e.stopPropagation()}
         onMouseDown={(e) => e.stopPropagation()}
       >
+        <button
+          className="icon-btn help-close"
+          title={t.close}
+          autoFocus
+          onClick={onClose}
+        >
+          <IconClose />
+        </button>
         <div className="modal-title">{t.helpTitle}</div>
-        <div className="help-hint">{t.helpHint}</div>
         <div className="help-body">
-          {rows.map((row, i) =>
-            row.sec ? (
-              <div key={i} className="help-sec">
-                {row.sec}
-              </div>
-            ) : (
-              <div key={i} className="help-row">
-                {row.keys && (
-                  <span className="help-keys">
-                    {row.keys.map((k) => (
-                      <span key={k} className="kbd">
-                        {k}
-                      </span>
-                    ))}
-                  </span>
-                )}
-                <span className="help-text">{row.text}</span>
-              </div>
-            )
-          )}
-        </div>
-        <div className="modal-actions">
-          <button className="btn" autoFocus onClick={onClose}>
-            {t.close}
-          </button>
+          {sections.map((sec) => (
+            <div className="help-sec-wrap" key={sec.title}>
+              <div className="help-sec">{sec.title}</div>
+              <table className="help-table">
+                <tbody>
+                  {sec.rows.map((row, i) => (
+                    <tr key={i} className={row.off ? 'off' : undefined}>
+                      <td className="help-key">
+                        {row.icon ? (
+                          <span className="help-icon" title={row.name}>
+                            {row.icon}
+                          </span>
+                        ) : (
+                          row.keys.map((k) => (
+                            <span key={k} className="kbd">
+                              {k}
+                            </span>
+                          ))
+                        )}
+                      </td>
+                      <td className="help-desc">{row.text}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
         </div>
       </div>
     </div>
