@@ -17,6 +17,7 @@ import {
   IconClose,
   IconEye,
   IconFileSymlink,
+  IconHelp,
   IconLetterT,
   IconTag,
   IconTrash,
@@ -176,6 +177,88 @@ function ConfirmDialog({ title, note, okText, cancelText, onCancel, onOk }) {
   );
 }
 
+/**
+ * 加速键字符串(如 `Cmd+Shift+V`)→ 当前平台的显示形式:mac 上是 ⌘⇧V,
+ * 麒麟/Windows 上是 Ctrl+Shift+V。快捷键可以改绑,所以帮助里必须按设置里的值现算。
+ */
+function prettyAccel(accel) {
+  const map = IS_MAC
+    ? { Cmd: '⌘', Ctrl: '⌃', Alt: '⌥', Shift: '⇧', Super: '⌘' }
+    : { Cmd: 'Ctrl', Ctrl: 'Ctrl', Alt: 'Alt', Shift: 'Shift', Super: 'Super' };
+  const parts = String(accel || '')
+    .split('+')
+    .map((p) => map[p] || p);
+  return IS_MAC ? parts.join('') : parts.join('+');
+}
+
+/**
+ * 使用方法弹窗。
+ *
+ * 快捷键一律现算,不写死:呼出热键取自设置(改绑后重开即变),
+ * 修饰键按平台显示(mac 的 ⌥ ⇧ ⌘ / 麒麟的 Alt Shift Ctrl),便捷粘贴关闭时改说关闭原因。
+ */
+function HelpDialog({ t, hotkey, quickPaste, onClose }) {
+  const alt = IS_MAC ? '⌥' : 'Alt';
+  const rows = [
+    { sec: t.helpSecOpen },
+    { keys: [prettyAccel(hotkey)], text: t.helpRowHotkey },
+    { keys: ['Esc'], text: t.helpRowEsc },
+    { sec: t.helpSecPick },
+    { keys: ['↑', '↓'], text: t.helpRowArrows },
+    { keys: [t.helpKeyEnter], text: t.helpRowEnter },
+    { text: t.helpRowWheel },
+    quickPaste
+      ? { keys: [alt, '1~9'], text: t.helpRowQuick(alt) }
+      : { text: t.helpQuickOff },
+    { sec: t.helpSecMouse },
+    { text: t.helpClick },
+    { text: t.helpRowBtns },
+    { text: t.helpSpecial },
+    { text: t.helpTopBtns },
+    { text: t.helpPrivacy },
+  ];
+
+  return (
+    <div className="modal-mask" onClick={onClose}>
+      <div
+        className="modal help"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-title">{t.helpTitle}</div>
+        <div className="help-hint">{t.helpHint}</div>
+        <div className="help-body">
+          {rows.map((row, i) =>
+            row.sec ? (
+              <div key={i} className="help-sec">
+                {row.sec}
+              </div>
+            ) : (
+              <div key={i} className="help-row">
+                {row.keys && (
+                  <span className="help-keys">
+                    {row.keys.map((k) => (
+                      <span key={k} className="kbd">
+                        {k}
+                      </span>
+                    ))}
+                  </span>
+                )}
+                <span className="help-text">{row.text}</span>
+              </div>
+            )
+          )}
+        </div>
+        <div className="modal-actions">
+          <button className="btn" autoFocus onClick={onClose}>
+            {t.close}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [items, setItems] = useState([]);
   const [query, setQuery] = useState('');
@@ -185,6 +268,8 @@ export default function App() {
   const [toast, setToast] = useState(null);
   // 查看大图(image 类记录的特殊操作)
   const [lightbox, setLightbox] = useState(null);
+  // 使用方法弹窗(顶栏 "?" 按钮)
+  const [help, setHelp] = useState(false);
   const [assets, setAssets] = useState(null);
   const [groupFilter, setGroupFilter] = useState(null);
   const [menuPos, setMenuPos] = useState(null);
@@ -557,8 +642,10 @@ export default function App() {
   // 有弹层打开时,Esc 交给弹层自己处理,不要顺手把窗口收起来
   const overlayRef = useRef(false);
   const lightboxRef = useRef(false);
+  const helpRef = useRef(false);
   lightboxRef.current = Boolean(lightbox);
-  overlayRef.current = Boolean(confirm || tagPop || menuPos || lightbox);
+  helpRef.current = help;
+  overlayRef.current = Boolean(confirm || tagPop || menuPos || lightbox || help);
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === 'Escape') {
@@ -566,6 +653,11 @@ export default function App() {
         // 大图查看中:先关大图,再轮到收起窗口
         if (lightboxRef.current) {
           setLightbox(null);
+          return;
+        }
+        // 使用方法弹窗同理:Esc 先关弹窗(help 在 overlayRef 里,不会顺手把窗口收了)
+        if (helpRef.current) {
+          setHelp(false);
           return;
         }
         if (overlayRef.current) return;
@@ -833,6 +925,9 @@ export default function App() {
           >
             <IconClean />
           </button>
+          <button className="icon-btn" title={t.help} onClick={() => setHelp(true)}>
+            <IconHelp />
+          </button>
           <button className="icon-btn" title={t.settings} onClick={() => setView('settings')}>
             <IconGear />
           </button>
@@ -1038,6 +1133,15 @@ export default function App() {
             </button>
           </div>
         </div>
+      )}
+
+      {help && (
+        <HelpDialog
+          t={t}
+          hotkey={(settings || DEFAULT_SETTINGS).hotkey}
+          quickPaste={quickPaste}
+          onClose={() => setHelp(false)}
+        />
       )}
 
       {confirm && (

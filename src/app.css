@@ -488,11 +488,12 @@ button:focus,
   align-items: center;
   justify-content: flex-start;
   padding-left: 22px;
-  gap: 7px;
 }
 
+/* 图标与文字的间距用 margin:老 WebKitGTK(麒麟 2.28)不支持 flex gap */
 .side-quit > svg {
   flex: 0 0 auto;
+  margin-right: 7px;
 }
 
 .row-btn > svg { vertical-align: middle; }
@@ -788,6 +789,80 @@ button:focus,
 }
 
 .modal-actions > * + * { margin-left: 8px; }
+
+/* 使用方法弹窗:内容比确认框长,单独放宽,正文区自己滚动 */
+.modal.help {
+  max-width: 420px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.help-hint {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.help-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 10px;
+  overflow-y: auto;
+}
+.help-body::-webkit-scrollbar {
+  width: 8px;
+}
+.help-body::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: 4px;
+}
+
+.help-sec {
+  margin-top: 14px;
+  margin-bottom: 7px;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+}
+/* 第一个小标题紧贴正文上沿,不再多留一段空白 */
+.help-body > .help-sec:first-child { margin-top: 0; }
+
+.help-row {
+  display: flex;
+  align-items: flex-start;
+  margin-top: 8px;
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.help-keys {
+  flex: 0 0 auto;
+  min-width: 78px;
+  margin-right: 10px;
+}
+/* 键帽间距用 margin:老 WebKitGTK(麒麟 2.28)不支持 flex gap */
+.help-keys > * + * { margin-left: 4px; }
+
+.kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  border: 1px solid var(--line-2);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font-size: 11.5px;
+  line-height: 17px;
+  text-align: center;
+}
+
+.help-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-2);
+}
 
 /* ---------------- 设置界面(左页签 + 右内容卡片) ---------------- */
 

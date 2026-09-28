@@ -125,6 +125,26 @@ const zh = {
   langEn: 'English',
   version: '版本',
   githubRepo: 'GitHub 仓库',
+
+  // 使用方法(顶栏"?"按钮)
+  help: '使用方法',
+  helpTitle: '使用方法',
+  helpHint: '快捷键已按当前系统和你的绑定显示',
+  helpSecOpen: '唤出与收起',
+  helpSecPick: '选择与粘贴',
+  helpSecMouse: '鼠标与其他',
+  helpRowHotkey: '显示 / 隐藏窗口',
+  helpRowEsc: '收起窗口',
+  helpRowArrows: '在记录之间上下移动选择，也支持滚轮',
+  helpRowEnter: '粘贴当前选中的记录（等同于鼠标点击）',
+  helpRowQuick: (alt) => `按住 ${alt} 再按 1~9，粘贴对应序号记录`,
+  helpQuickOff: '便捷粘贴已关闭；需要的话在 设置 → 常规 里打开。',
+  helpKeyEnter: '回车',
+  helpClick: '点击任意记录即可粘贴到上一个应用。',
+  helpRowBtns: '每条记录尾部有四个按钮：特殊操作、分组、收藏、删除。',
+  helpSpecial:
+    '特殊操作随类型变化：文字＝粘贴纯文本，图片＝预览，文件＝打开所在目录，链接＝浏览器中打开。',
+  helpTopBtns: '顶部图标：图钉＝置顶，扫帚＝清理临时记录，"?"＝使用方法，齿轮＝设置。',
 };
 
 const en = {
@@ -215,7 +235,7 @@ const en = {
   sectionI18n: 'Language',
   sectionAbout: 'Product',
   sectionLinks: 'Links',
-  quitApp: 'Quit KylinPaste',
+  quitApp: 'Quit App',
   quitOk: 'Quit',
   quitTitle: 'Quit KylinPaste?',
   quitNote: 'The hotkey and clipboard monitoring stop until you relaunch the app.',
@@ -247,6 +267,29 @@ const en = {
   langEn: 'English',
   version: 'Version',
   githubRepo: 'GitHub repository',
+
+  help: 'How to use',
+  helpTitle: 'How to use',
+  helpHint: 'Shortcuts reflect your system and current binding',
+  helpSecOpen: 'Show & hide',
+  helpSecPick: 'Select & paste',
+  helpSecMouse: 'Mouse & more',
+  helpRowHotkey: 'Show / hide the window (rebind: Settings → General → Shortcut)',
+  helpRowEsc: 'Hide the window',
+  helpRowArrows: 'Move the selection up / down',
+  helpRowEnter: 'Paste the selected record (same as clicking it)',
+  helpRowWheel: 'Scrolling also moves the selection.',
+  helpRowQuick: (alt) =>
+    `Hold ${alt} and press 1-9 to paste one of the first nine records (the number badges appear while ${alt} is held)`,
+  helpQuickOff: 'Quick paste is off; turn it on in Settings → General.',
+  helpKeyEnter: 'Enter',
+  helpClick: 'Click any record to paste it into the previous app.',
+  helpRowBtns: 'Every record has four buttons at the end: special action, group, star, delete.',
+  helpSpecial:
+    'The special action depends on the type: text / rich text = paste as plain text, image = view image, file = reveal in file manager, link = open in browser.',
+  helpTopBtns:
+    'Top icons: pin = keep on top, broom = clear temporary records (starred and grouped ones are kept), "?" = this guide, gear = settings.',
+  helpPrivacy: 'All records and settings stay on this machine — no network transfer.',
 };
 
 const DICTS = { zh, en };

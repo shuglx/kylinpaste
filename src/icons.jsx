@@ -134,6 +134,15 @@ export const IconInfo = () => (
   </svg>
 );
 
+/** 帮助(顶栏,齿轮左边):Tabler `help` */
+export const IconHelp = () => (
+  <svg width="22" height="22" viewBox="0 0 24 24" {...iconStroke}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 17l0 .01" />
+    <path d="M12 13.5a1.5 1.5 0 0 1 1 -1.5a2.6 2.6 0 1 0 -3 -4" />
+  </svg>
+);
+
 /** 退出应用(设置侧栏底部):Tabler `power` */
 export const IconPower = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
