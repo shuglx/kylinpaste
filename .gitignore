@@ -16,3 +16,6 @@ targetosinfo.txt
 # 运行时产物 / 日志
 *.log
 generated-images/
+
+# 小红书物料
+docs/xhs/
