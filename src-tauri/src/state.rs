@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 /// 一条剪贴板记录
@@ -38,11 +39,21 @@ pub struct ClipboardRecord {
     pub favorite: bool,
 }
 
+/// 历史里一条记录的共享句柄。
+///
+/// 为什么用 `Arc`:落盘要拿一份"与后续改动隔离"的快照。以前是把整份历史逐条深拷贝
+/// (`VecDeque<ClipboardRecord>::cloned()`),历史里全是长文本/富文本时这一步要拷几百 MB,
+/// 而且是**握着 `HISTORY` 锁**做的——剪贴板捕获、粘贴、前端命令会一起被卡住
+/// 几十到几百毫秒。换成 `Arc` 之后,快照只是拷 N 个指针(1000 条约 10µs 量级),
+/// 持锁时间与历史体积基本脱钩;`Arc::make_mut` 的写时复制保证快照仍是"那一刻"的内容。
+pub type SharedRecord = Arc<ClipboardRecord>;
+
 /// 落盘文件结构(app_data_dir/history.json)
 #[derive(Serialize, Deserialize)]
 struct PersistFile {
     version: u32,
-    items: Vec<ClipboardRecord>,
+    /// serde 对 `Arc` 是透明的(序列化结果与裸记录逐字节一致),需要 "rc" feature
+    items: Vec<SharedRecord>,
 }
 
 /// 发给前端的记录视图。
@@ -80,8 +91,10 @@ fn preview_text(text: &Option<String>) -> Option<String> {
     })
 }
 
-impl From<&ClipboardRecord> for RecordView {
-    fn from(rec: &ClipboardRecord) -> Self {
+impl From<&SharedRecord> for RecordView {
+    fn from(shared: &SharedRecord) -> Self {
+        // 借出 Arc 里的记录(不产生任何拷贝)
+        let rec: &ClipboardRecord = shared;
         Self {
             id: rec.id,
             kind: rec.kind.clone(),
@@ -97,7 +110,7 @@ impl From<&ClipboardRecord> for RecordView {
     }
 }
 
-static HISTORY: Lazy<Mutex<VecDeque<ClipboardRecord>>> =
+static HISTORY: Lazy<Mutex<VecDeque<SharedRecord>>> =
     Lazy::new(|| Mutex::new(VecDeque::new()));
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static SUPPRESS_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
@@ -270,7 +283,8 @@ fn load() {
             hist.clear();
             let mut repaired = 0usize;
             for mut rec in file.items {
-                if drop_broken_html(&mut rec) {
+                // 刚反序列化出来的记录只有这一个句柄,make_mut 不会产生复制
+                if drop_broken_html(Arc::make_mut(&mut rec)) {
                     repaired += 1;
                 }
                 hist.push_back(rec);
@@ -296,6 +310,16 @@ fn load() {
     }
 }
 
+/// 取一份"与后续改动隔离"的历史快照。
+///
+/// 只拷 `Arc` 指针(1000 条约 10µs 量级),不再逐条深拷贝内容——所以**持锁时间与
+/// 历史体积基本脱钩**,长文本/富文本再多也不会卡住剪贴板捕获、粘贴、前端命令。
+/// 隔离性由 `Arc::make_mut` 的写时复制保证:快照之后对记录的改动会新开一份,
+/// 正在落盘的这份不会被改到一半。
+fn snapshot() -> Vec<SharedRecord> {
+    HISTORY.lock().iter().cloned().collect()
+}
+
 fn save() -> Result<(), String> {
     // 后台线程与"退出前收尾落盘"可能同时进来,必须串行(见 SAVE_LOCK)
     let _guard = SAVE_LOCK.lock();
@@ -309,7 +333,7 @@ fn save() -> Result<(), String> {
         SAVED_SEQ.store(version, Ordering::SeqCst);
         return Ok(());
     };
-    let items: Vec<ClipboardRecord> = HISTORY.lock().iter().cloned().collect();
+    let items = snapshot();
     let json = serde_json::to_vec(&PersistFile {
         version: PERSIST_VERSION,
         items,
@@ -342,24 +366,26 @@ pub fn is_suppressed() -> bool {
 ///
 /// 相同哈希的旧记录移除、新记录置顶;**新记录没有分组时继承旧记录的分组**,
 /// 这样同一份内容被重新复制不会把用户打过的分组弄丢(收藏记在前端,按哈希天然保留)。
-fn insert_record(hist: &mut VecDeque<ClipboardRecord>, mut rec: ClipboardRecord) -> ClipboardRecord {
+fn insert_record(hist: &mut VecDeque<SharedRecord>, mut rec: ClipboardRecord) -> SharedRecord {
     if let Some(pos) = hist.iter().position(|r| r.hash == rec.hash) {
         let old = hist.remove(pos).expect("position 刚返回过");
         if rec.group.is_none() {
-            rec.group = old.group;
+            rec.group = old.group.clone();
         }
         // 收藏过的内容重新复制,仍然是收藏
         rec.favorite |= old.favorite;
     }
     rec.id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
     rec.created_at = now_ms();
-    hist.push_front(rec.clone());
+    let shared = Arc::new(rec);
+    hist.push_front(Arc::clone(&shared));
     trim(hist, max_items());
-    rec
+    shared
 }
 
 /// 一条记录是不是"临时记录"(既没收藏也没分组)——只有这种才会被上限淘汰
-fn is_transient(rec: &ClipboardRecord) -> bool {
+fn is_transient(rec: &SharedRecord) -> bool {
+    // 字段访问借 Deref 自动穿透 Arc
     !rec.favorite && rec.group.is_none()
 }
 
@@ -367,7 +393,7 @@ fn is_transient(rec: &ClipboardRecord) -> bool {
 ///
 /// 与 `trim` 分开是为了能单测:`trim` 还要删磁盘文件,依赖全局数据目录。
 /// 返回的下标**从大到小**(从队尾往前扫),调用方按这个顺序删不会串位。
-fn eviction_indices(hist: &VecDeque<ClipboardRecord>, limit: usize) -> Vec<usize> {
+fn eviction_indices(hist: &VecDeque<SharedRecord>, limit: usize) -> Vec<usize> {
     let transient = hist.iter().filter(|rec| is_transient(rec)).count();
     let mut excess = transient.saturating_sub(limit);
     let mut indices = Vec::new();
@@ -387,7 +413,7 @@ fn eviction_indices(hist: &VecDeque<ClipboardRecord>, limit: usize) -> Vec<usize
 ///
 /// 被淘汰的记录会**连同它在数据目录里的图片与缩略图一起删掉**——只从内存里
 /// 淘汰而文件留在盘上,长期使用下就是"记录越淘汰、磁盘越涨"。
-fn trim(hist: &mut VecDeque<ClipboardRecord>, limit: usize) {
+fn trim(hist: &mut VecDeque<SharedRecord>, limit: usize) {
     let indices = eviction_indices(hist, limit);
     if indices.is_empty() {
         return;
@@ -418,22 +444,28 @@ pub fn get_all_views() -> Vec<RecordView> {
     HISTORY.lock().iter().map(RecordView::from).collect()
 }
 
-pub fn get_by_id(id: u64) -> Option<ClipboardRecord> {
+/// 按 id 取一条记录。
+///
+/// 返回的是共享句柄(`Arc`):粘贴链路会拿它读全文/富文本/图片路径,
+/// 共享持有既避免了每次粘贴都深拷贝一份(最长可达几百 KB 的长文本),
+/// 也保证读取期间这份内容不会被淘汰或改写掉。
+pub fn get_by_id(id: u64) -> Option<SharedRecord> {
     HISTORY.lock().iter().find(|r| r.id == id).cloned()
 }
 
 /// 设置(或取消)收藏。收藏后不占"保留条数"上限,也不会被自动淘汰。
-pub fn set_favorite(id: u64, favorite: bool) -> Option<ClipboardRecord> {
+pub fn set_favorite(id: u64, favorite: bool) -> Option<SharedRecord> {
     let mut hist = HISTORY.lock();
-    let rec = hist.iter_mut().find(|r| r.id == id)?;
-    if rec.favorite == favorite {
+    let pos = hist.iter().position(|r| r.id == id)?;
+    if hist[pos].favorite == favorite {
         // 值没变:不置脏。否则每次"重复点收藏"都会白触发一次全量重写
-        let same = rec.clone();
+        let same = Arc::clone(&hist[pos]);
         drop(hist);
         return Some(same);
     }
-    rec.favorite = favorite;
-    let updated = rec.clone();
+    // make_mut:没有别的句柄(落盘快照/正在粘贴)持有时就地改,被持有时写时复制
+    Arc::make_mut(&mut hist[pos]).favorite = favorite;
+    let updated = Arc::clone(&hist[pos]);
     drop(hist);
     mark_dirty();
     Some(updated)
@@ -449,7 +481,7 @@ pub fn import_favorites(hashes: &[String]) -> usize {
     let mut marked = 0;
     for rec in hist.iter_mut() {
         if !rec.favorite && hashes.iter().any(|h| *h == rec.hash) {
-            rec.favorite = true;
+            Arc::make_mut(rec).favorite = true;
             marked += 1;
         }
     }
@@ -463,7 +495,7 @@ pub fn import_favorites(hashes: &[String]) -> usize {
 // ---------------------------------------------------------------- 分组 / 删除
 
 /// 设置(或清除)一条记录的分组。空白字符串一律当作清除,超长截断。
-pub fn set_group(id: u64, group: Option<String>) -> Option<ClipboardRecord> {
+pub fn set_group(id: u64, group: Option<String>) -> Option<SharedRecord> {
     let group = group
         .map(|g| {
             let g = g.trim();
@@ -472,15 +504,16 @@ pub fn set_group(id: u64, group: Option<String>) -> Option<ClipboardRecord> {
         .filter(|g| !g.is_empty());
 
     let mut hist = HISTORY.lock();
-    let rec = hist.iter_mut().find(|r| r.id == id)?;
-    if rec.group == group {
+    let pos = hist.iter().position(|r| r.id == id)?;
+    if hist[pos].group == group {
         // 值没变(比如在分组弹层里直接点确认):不置脏,免得白重写一遍 history.json
-        let same = rec.clone();
+        let same = Arc::clone(&hist[pos]);
         drop(hist);
         return Some(same);
     }
-    rec.group = group;
-    let updated = rec.clone();
+    // make_mut:没有别的句柄持有时就地改,被持有时写时复制(见 SharedRecord)
+    Arc::make_mut(&mut hist[pos]).group = group;
+    let updated = Arc::clone(&hist[pos]);
     drop(hist);
     mark_dirty();
     Some(updated)
@@ -496,7 +529,7 @@ pub fn remove_ids(ids: &[u64]) -> usize {
     }
     let mut hist = HISTORY.lock();
     let old = std::mem::take(&mut *hist);
-    let mut removed: Vec<ClipboardRecord> = Vec::new();
+    let mut removed: Vec<SharedRecord> = Vec::new();
     let mut kept = VecDeque::with_capacity(old.len());
     for rec in old {
         if ids.contains(&rec.id) {
@@ -521,7 +554,7 @@ pub fn remove_ids(ids: &[u64]) -> usize {
 }
 
 /// 删掉记录在应用数据目录里的图片与缩略图(用户自己的原文件绝不碰)
-fn remove_record_files(rec: &ClipboardRecord, alive: &[String]) {
+fn remove_record_files(rec: &SharedRecord, alive: &[String]) {
     let Some(dir) = DATA_DIR.lock().clone() else {
         return;
     };
@@ -636,7 +669,7 @@ mod tests {
     }
 
     /// 插入到全局历史(测试用;各用例的 hash/id 都不重复,可并行跑)
-    fn insert(hash: &str, text: &str) -> ClipboardRecord {
+    fn insert(hash: &str, text: &str) -> SharedRecord {
         insert_record(&mut HISTORY.lock(), rec(hash, text))
     }
 
@@ -664,7 +697,7 @@ mod tests {
         assert!(second.favorite, "收藏过的内容重新复制仍是收藏");
 
         let hist = HISTORY.lock();
-        let same: Vec<&ClipboardRecord> = hist.iter().filter(|r| r.hash == "h-dedupe").collect();
+        let same: Vec<&SharedRecord> = hist.iter().filter(|r| r.hash == "h-dedupe").collect();
         assert_eq!(same.len(), 1, "同哈希只应保留一条");
         assert_eq!(same[0].id, second.id, "新记录应顶到最前");
     }
@@ -680,10 +713,10 @@ mod tests {
         let newest = insert_record(&mut hist, rec("h-t2", "4"));
         for r in hist.iter_mut() {
             if r.id == fav.id {
-                r.favorite = true;
+                Arc::make_mut(r).favorite = true;
             }
             if r.id == grp.id {
-                r.group = Some("web".into());
+                Arc::make_mut(r).group = Some("web".into());
             }
         }
 
@@ -708,10 +741,10 @@ mod tests {
         let newest = insert_record(&mut hist, rec("h-ev4", "4"));
         for r in hist.iter_mut() {
             if r.id == fav.id {
-                r.favorite = true;
+                Arc::make_mut(r).favorite = true;
             }
             if r.id == grp.id {
-                r.group = Some("web".into());
+                Arc::make_mut(r).group = Some("web".into());
             }
         }
 
@@ -785,8 +818,9 @@ mod tests {
         keep.favorite = true;
 
         let mut hist = VecDeque::new();
-        hist.push_back(keep.clone()); // 旧
-        hist.push_back(evict); // 新
+        let keep = Arc::new(keep);
+        hist.push_back(Arc::clone(&keep)); // 旧
+        hist.push_back(Arc::new(evict)); // 新
 
         *DATA_DIR.lock() = Some(dir.clone());
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -815,14 +849,10 @@ mod tests {
             Some("web")
         );
         assert_eq!(set_group(r.id, Some("   ".into())).unwrap().group, None);
+        let long = set_group(r.id, Some("a".repeat(80))).unwrap();
         assert_eq!(
-            set_group(r.id, Some("a".repeat(80)))
-                .unwrap()
-                .group
-                .unwrap()
-                .chars()
-                .count(),
-            MAX_GROUP_CHARS
+            long.group.as_deref().map(|g| g.chars().count()),
+            Some(MAX_GROUP_CHARS)
         );
         assert!(
             set_group(999_999_999, Some("x".into())).is_none(),
@@ -885,6 +915,61 @@ mod tests {
         assert_eq!(CHANGE_SEQ.load(Ordering::SeqCst), after, "分组没变不应置脏");
         set_group(r.id, Some("work".into())); // 真变了
         assert!(CHANGE_SEQ.load(Ordering::SeqCst) > after, "分组真变了必须置脏");
+    }
+
+    /// 落盘格式必须与"裸记录"逐字节一致(`Arc` 在 serde 里应当是透明的):
+    /// 否则升级后旧 history.json 读不出来,或者新旧版本互相把文件写坏。
+    #[test]
+    fn arc_serializes_exactly_like_plain_record() {
+        let plain = vec![rec("h-fmt", "内容 with \"quotes\" 和换行\n")];
+        let shared: Vec<SharedRecord> = plain.iter().cloned().map(Arc::new).collect();
+
+        let plain_json = serde_json::to_vec(&plain).expect("裸记录序列化");
+        let shared_json = serde_json::to_vec(&shared).expect("Arc 记录序列化");
+        assert_eq!(plain_json, shared_json, "Arc 包装不应改变落盘字节");
+
+        // 两个方向都要能读回来(旧文件 → 新代码,新文件 → 旧结构)
+        let back: Vec<SharedRecord> = serde_json::from_slice(&plain_json).expect("旧文件可读");
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].hash, "h-fmt");
+        assert_eq!(back[0].text.as_deref(), Some("内容 with \"quotes\" 和换行\n"));
+
+        let plain_back: Vec<ClipboardRecord> =
+            serde_json::from_slice(&shared_json).expect("新文件可被裸结构读取");
+        assert_eq!(plain_back[0].text.as_deref(), Some("内容 with \"quotes\" 和换行\n"));
+    }
+
+    /// 落盘快照必须**只拷指针**,不能再把整份历史逐条深拷贝。
+    ///
+    /// 这是"历史里全是长文本时,每次落盘都握着 HISTORY 锁拷几百 MB"的根治点:
+    /// 快照与原记录指向同一份数据(Arc::ptr_eq),持锁时间与历史体积脱钩。
+    /// 同时验证写时复制:`Arc::make_mut` 改动记录后,快照仍保有改之前的样子
+    /// (否则"落盘写到一半被改动"会写出撕裂的内容)。
+    #[test]
+    fn save_snapshot_shares_records_and_copies_on_write() {
+        let _s = GLOBAL_STATE_LOCK.lock();
+        let rec = insert("h-snap", "快照只该拷指针");
+
+        // 就是 save() 用的那一份快照(共用同一个函数,不是复刻一遍)
+        let snap = snapshot();
+        let in_snapshot = snap.iter().find(|r| r.id == rec.id).expect("快照里应当有它");
+        assert!(
+            Arc::ptr_eq(in_snapshot, &rec),
+            "快照必须与原记录共享同一份数据(没有深拷贝)"
+        );
+
+        // 快照存在期间改动记录:写时复制生效,快照内容不受影响
+        set_favorite(rec.id, true);
+        assert!(
+            !in_snapshot.favorite,
+            "快照应当是改动之前的样子(写时复制)"
+        );
+        let now = HISTORY.lock().iter().find(|r| r.id == rec.id).cloned();
+        assert!(now.expect("记录还在").favorite, "历史里的那条已改为收藏");
+        assert!(!rec.favorite, "旧句柄不会被就地改写");
+
+        // 前端视图这条链路也要能正常从 Arc 里读出内容
+        assert!(get_all_views().iter().any(|v| v.id == rec.id));
     }
 
     /// 退出前的收尾落盘:500ms 去抖窗口内的改动不能丢。
