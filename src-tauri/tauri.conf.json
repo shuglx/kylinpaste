@@ -41,7 +41,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost blob: data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost ws://localhost:5173 http://localhost:5173"
     },
     "bundle": {
       "identifier": "com.kylinpaste.app",
