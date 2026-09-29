@@ -96,6 +96,23 @@ fn hash_bytes(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
 }
 
+/// 流式算文件的 sha256(分块读,不把整个文件读进内存)
+fn hash_file(path: &std::path::Path) -> Result<String, String> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).map_err(|e| format!("打开 {path:?} 失败: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf).map_err(|e| format!("读取 {path:?} 失败: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// 捕获当前剪贴板内容。返回 Ok(None) 表示内容为空或无需记录。
 fn capture(app: &AppHandle) -> Result<Option<ClipboardRecord>, String> {
     with_reader(|ctx| capture_with(app, ctx))
@@ -299,6 +316,51 @@ mod tests {
     use super::{html_has_visible_text, text_record};
     use crate::state;
 
+    /// RGBA8 源图走"新落盘路径"(`save_to_path` + 流式哈希)必须与旧的
+    /// `to_rgba8()` + `PngEncoder` 路径产出**完全相同的字节**:
+    /// 一旦不一致,升级后同一张图会算出不同哈希、被当成新内容再存一份。
+    /// (非 RGBA8 源(如 RGB8 截图)有意改成更小的 RGB PNG,哈希会变——见 save_image 注释)
+    #[test]
+    fn rgba_png_save_matches_legacy_encoding() {
+        use clipboard_rs::common::RustImage;
+        use clipboard_rs::RustImageData;
+        use image::{codecs::png::PngEncoder, ImageEncoder};
+
+        // 带 alpha 的 RGBA8 源图(透明像素保证不会退化成 RGB)
+        let src = image::RgbaImage::from_fn(9, 5, |x, y| {
+            let alpha = if x == 0 && y == 0 { 128 } else { 255 };
+            image::Rgba([(x * 25) as u8, (y * 50) as u8, 9, alpha])
+        });
+        let mut src_png = Vec::new();
+        PngEncoder::new(&mut src_png)
+            .write_image(src.as_raw(), 9, 5, image::ExtendedColorType::Rgba8)
+            .expect("生成测试用 PNG");
+
+        let decoded = RustImageData::from_bytes(&src_png).expect("解码自造 PNG");
+
+        // 旧路径:to_rgba8() 再编码
+        let rgba = decoded.to_rgba8().expect("to_rgba8");
+        let mut legacy = Vec::new();
+        PngEncoder::new(&mut legacy)
+            .write_image(
+                rgba.as_raw(),
+                rgba.width(),
+                rgba.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .expect("旧路径编码");
+
+        // 新路径:直接落盘 + 流式哈希
+        let tmp = std::env::temp_dir().join(format!("kp-save-test-{}.png", std::process::id()));
+        decoded.save_to_path(tmp.to_str().expect("临时路径")).expect("落盘");
+        let new_bytes = std::fs::read(&tmp).expect("读回落盘结果");
+        let new_hash = super::hash_file(&tmp).expect("流式哈希");
+        let _ = std::fs::remove_file(&tmp);
+
+        assert_eq!(new_bytes, legacy, "RGBA8 源图两条路径的 PNG 字节必须一致");
+        assert_eq!(new_hash, super::hash_bytes(&legacy), "两条路径的哈希必须一致");
+    }
+
     /// Word/WPS 复制文字:富文本里有正文 → 必须按文字处理(哪怕剪贴板上还挂着位图)
     #[test]
     fn rich_text_with_text_counts_as_text() {
@@ -389,6 +451,12 @@ fn current_source_app() -> Option<String> {
 const IMAGE_EXTS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "bmp", "webp", "tiff", "tif"];
 /// 超过这个体积的图片文件不做解码/复制,仍按普通文件记录(避免捕获线程长时间占用内存)
 const MAX_IMAGE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// 单张图片允许的最大像素数(约 8000×5000,解码后 ≈160MB RGBA)。
+///
+/// 为什么按"像素"而不是文件字节拦:PNG 压缩率差异极大——一张 2 万×2 万、内容均匀的图
+/// 可能只有几百 KB,解码后却是 1.6GB;而 64MB 的高噪点图可能只有 200 万像素。
+/// 文件大小完全反映不了解码后的内存占用,只有尺寸才是可靠的指标。
+const MAX_IMAGE_PIXELS: u64 = 40_000_000;
 
 /// 把"被复制的图片文件"转成图片记录:标题用文件名,便于和截图区分。
 /// 解析/解码任何一步失败都返回 None,调用方按普通文件记录处理。
@@ -416,6 +484,24 @@ fn capture_image_file(
         return None;
     }
 
+    // 只读文件头拿尺寸(不解码像素):像素超限连文件都不读,直接按普通文件记录。
+    // 这一步是路径 B 唯一的"解码前"拦截点——一旦进了 from_bytes,png crate 会按
+    // image crate 的默认上限(512MiB)决定成败,那个上限我们控制不了也太宽松。
+    match image::image_dimensions(&path) {
+        Ok((w, h)) if u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS => {
+            println!(
+                "[捕获] 图片像素过大({w}x{h} > {MAX_IMAGE_PIXELS}),按普通文件记录: {}",
+                path.display()
+            );
+            return None;
+        }
+        Ok(_) => {}
+        Err(e) => {
+            // 读不出尺寸(格式损坏/异常)时不在这里下结论,交给后面的解码流程去报错
+            println!("[捕获] 读取图片尺寸失败({e}),继续尝试解码: {}", path.display());
+        }
+    }
+
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -430,6 +516,9 @@ fn capture_image_file(
             return None;
         }
     };
+    // 像素已经解码进内存,文件字节(最大 64MB)不再需要:立刻释放,
+    // 不要让它和后面的像素缓冲叠加成峰值
+    drop(bytes);
     let (rel_path, hash) = match save_image(app, &image) {
         Ok(v) => v,
         Err(e) => {
@@ -527,36 +616,56 @@ fn hex_value(byte: u8) -> Option<u8> {
 }
 
 /// 保存剪贴板图片为 PNG(同时生成列表用的缩略图),返回(相对路径, 哈希)
+///
+/// **不做全量中间缓冲**:直接由已解码的图像流式写盘(`image::DynamicImage::save`,
+/// 内部只是把源像素缓冲当 `&[u8]` 交给编码器 + `BufWriter<File>`)。
+/// 早先是 `to_rgba8()` 复制一份 RGBA、`PngEncoder` 再编码进一个 Vec——解码尺寸的
+/// 图会同时常驻 2~3 份(4000 万像素 = 160MB/份),低内存麒麟机上就是 OOM。
+///
+/// 代价:不再把输出统一强制成 RGBA8,而是按解码出的颜色类型写。源本来就是 RGBA8 的
+/// (带 alpha 的 PNG)与旧版字节完全一致;RGB/灰度源会写成更小的 RGB/灰度 PNG——
+/// 这类图升级后算出的哈希与旧记录不同,重新复制时会多做一条记录(一次性,旧记录
+/// 随后被上限淘汰,之后自愈)。
 fn save_image(app: &AppHandle, image: &RustImageData) -> Result<(String, String), String> {
-    use image::{codecs::png::PngEncoder, ImageEncoder};
-
-    let rgba = image.to_rgba8().map_err(|e| e.to_string())?;
-    let (w, h) = (rgba.width(), rgba.height());
-
-    let mut png_data = Vec::new();
-    PngEncoder::new(&mut png_data)
-        .write_image(
-            rgba.as_raw(),
-            w,
-            h,
-            image::ExtendedColorType::Rgba8,
-        )
-        .map_err(|e| e.to_string())?;
-
-    let hash = hash_bytes(&png_data);
-    let filename = format!("{}.png", &hash[..16]);
+    // 路径 A(剪贴板位图)由 clipboard-rs 内部解码,拦不到"解码前",这里按已解码的
+    // 尺寸兜底:超限就放弃落盘(日志里有记录),不再继续走编码与缩略图
+    let (w, h) = image.get_size();
+    if u64::from(w) * u64::from(h) > MAX_IMAGE_PIXELS {
+        return Err(format!("图片像素过大({w}x{h}),已跳过保存"));
+    }
 
     let data_dir = app
         .path_resolver()
         .app_data_dir()
         .ok_or("无法定位应用数据目录")?;
     let images_dir = data_dir.join(state::IMAGES_DIR);
+    std::fs::create_dir_all(&images_dir).map_err(|e| format!("创建目录失败: {e}"))?;
 
-    // 原图:文件名就是内容哈希,同一张图只写一次
+    // 文件名就是内容哈希(同一张图只留一份;"截图"与"复制图片文件"两条路径走的都是
+    // 同一套解码+编码,所以同一张图天然是同一个哈希)。哈希要算在"写出来的 PNG 字节"
+    // 上,所以先写临时文件、算完哈希再改名到位。
+    let tmp = images_dir.join(format!(".tmp-{}-{}.png", std::process::id(), state::now_ms()));
+    let tmp_str = tmp.to_str().ok_or("临时文件路径不是有效的 UTF-8")?;
+    if let Err(e) = image.save_to_path(tmp_str) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("写入图片失败: {e}"));
+    }
+    let hash = match hash_file(&tmp) {
+        Ok(hash) => hash,
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+    };
+
+    // 已经在历史里存过同一张图:丢掉临时文件即可,不重复占盘
+    let filename = format!("{}.png", &hash[..16]);
     let final_path = images_dir.join(&filename);
-    if !final_path.exists() {
-        std::fs::create_dir_all(&images_dir).map_err(|e| format!("创建目录失败: {e}"))?;
-        std::fs::write(&final_path, &png_data).map_err(|e| format!("写入图片失败: {e}"))?;
+    if final_path.exists() {
+        let _ = std::fs::remove_file(&tmp);
+    } else if let Err(e) = std::fs::rename(&tmp, &final_path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("替换图片失败: {e}"));
     }
 
     // 缩略图:列表里每行只画 38px,4K 截图直接塞给 webview 会吃掉几十 MB 内存,
