@@ -59,7 +59,7 @@ KylinPaste 因此而生：**按麒麟的目标环境反推技术选型**——�
 **银河麒麟 / Ubuntu（ARM64）**
 
 ```bash
-sudo dpkg -i kylinpaste_1.6.0_arm64.deb
+sudo dpkg -i kylinpaste_1.6.1_arm64.deb
 # 依赖 WebKitGTK 4.1(麒麟 V10 SP1 自带),如缺依赖可执行: sudo apt -f install
 ```
 
