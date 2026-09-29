@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS = {
   quick_paste: true,
   opacity: 90,
   theme: 'system',
+  reset_filter_on_show: false,
 };
 
 /** 分组配色:mac 标签那 7 个颜色(从截图上取样得到),循环使用。
@@ -512,12 +513,20 @@ export default function App() {
     });
   }, [items, query, filter, groupFilter]);
 
+  /** 显示错误横幅:新错误先清掉上一个的定时器,
+   *  否则连续两条错误时,第一条的 3s 定时器会把第二条提前清掉 */
+  const errorTimer = useRef(null);
+  const showError = (e) => {
+    setError(String(e));
+    if (errorTimer.current) window.clearTimeout(errorTimer.current);
+    errorTimer.current = window.setTimeout(() => setError(null), 3000);
+  };
+
   const pasteItem = (id) => {
     if (id == null) return;
     invoke('cmd_paste_item', { id }).catch((e) => {
       console.error('粘贴失败：', e);
-      setError(String(e));
-      window.setTimeout(() => setError(null), 3000);
+      showError(e);
     });
   };
 
@@ -586,8 +595,7 @@ export default function App() {
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, group } : i)));
     invoke('cmd_set_group', { id, group }).catch((e) => {
       console.error('设置分组失败：', e);
-      setError(String(e));
-      window.setTimeout(() => setError(null), 3000);
+      showError(e);
     });
   };
 
@@ -597,8 +605,7 @@ export default function App() {
     setItems((prev) => prev.filter((i) => !ids.includes(i.id)));
     invoke('cmd_delete_records', { ids }).catch((e) => {
       console.error('删除失败：', e);
-      setError(String(e));
-      window.setTimeout(() => setError(null), 3000);
+      showError(e);
     });
   };
 
@@ -652,6 +659,9 @@ export default function App() {
   const listRef = useRef(null);
   const quickPasteRef = useRef(true);
   quickPasteRef.current = quickPaste;
+  // "显示时重置筛选"开关:呼出事件的回调里要读当前值,用 ref 免得重新订阅事件
+  const resetFilterOnShowRef = useRef(false);
+  resetFilterOnShowRef.current = Boolean((settings || DEFAULT_SETTINGS).reset_filter_on_show);
   const viewRef = useRef(view);
   viewRef.current = view;
   const modDownRef = useRef(false);
@@ -760,8 +770,7 @@ export default function App() {
             runAfterModifierRelease(() =>
               invoke('cmd_paste_item', { id: rec.id }).catch((err) => {
                 console.error('粘贴失败：', err);
-                setError(String(err));
-                window.setTimeout(() => setError(null), 3000);
+                showError(err);
               })
             );
           }
@@ -823,8 +832,24 @@ export default function App() {
     const unlistenSummon = listen('window-summoned', () => {
       setView('list');
       setSelIdx(0);
+      // 覆盖层一律收起:与"从设置页切回列表"同理,呼出后应该直接看到干净的列表。
+      // 这一组**与重置筛选开关无关**(放在开关判断之外)——开关管的是筛选条件,
+      // 不该管"窗口上还压着什么"。其中 tagPop 尤其必要:它的锚点在可滚动的列表里,
+      // 下面那句 scrollTo(0,0) 会让浮层和它那条记录脱钩。
+      setHelp(false);
+      setLightbox(null);
+      setConfirm(null);
+      setTagPop(null);
+      setMenuPos(null);
       // 列表滚动位置也回到顶部(隐藏前可能滚到了下面)
       listRef.current?.scrollTo(0, 0);
+      // "显示时重置筛选"(设置 → 常规 → 窗口,默认关):把上次留下的搜索词、
+      // 分组筛选和分类都清掉,回到"全部"——呼出后直接从干净列表开始找内容
+      if (resetFilterOnShowRef.current) {
+        setQuery('');
+        setGroupFilter(null);
+        setFilter('all');
+      }
     });
     return () => {
       unlisten.then((f) => f());

@@ -268,6 +268,11 @@ export default function Settings({
   // 预览即时生效;落盘走防抖——老 WebKitGTK(麒麟)拖动结束时不可靠地派发
   // pointerup/keyup,依赖它们会导致"拖了但没保存",再进设置页回显旧值
   const commitTimer = useRef(null);
+  // 卸载(关设置页)时丢掉还没到点的提交:回调闭包里捕获的是渲染时的旧 settings,
+  // 卸载后再触发会把"最后瞬间改的其它设置"覆盖回旧值
+  useEffect(() => () => {
+    if (commitTimer.current) clearTimeout(commitTimer.current);
+  }, []);
   const previewOpacity = (value) => {
     setOpacity(value);
     document.documentElement.style.setProperty('--bg-alpha', String(value / 100));
@@ -429,6 +434,13 @@ export default function Settings({
                 {hotkeyStatus && hotkeyStatus.ok && hotkeyStatus.wayland && (
                   <div className="hotkey-warn soft">{t.hotkeyWayland}</div>
                 )}
+                <Row label={t.resetFilterOnShow} hint={t.resetFilterOnShowTip}>
+                  <Switch
+                    checked={settings.reset_filter_on_show}
+                    onChange={(v) => commit({ reset_filter_on_show: v })}
+                    label={t.resetFilterOnShow}
+                  />
+                </Row>
               </div>
 
               <div className="group-title">{t.sectionAppearance}</div>

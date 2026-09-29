@@ -36,6 +36,8 @@ pub struct Settings {
     pub opacity: u8,
     /// 主题:light | dark | system(跟随系统深浅色)
     pub theme: String,
+    /// 呼出窗口时清空搜索框、分组与分类筛选,从干净列表开始(默认关)
+    pub reset_filter_on_show: bool,
 }
 
 /// 默认热键:Ctrl+Shift+V(mac 上按习惯用 Cmd+Shift+V)
@@ -56,6 +58,7 @@ impl Default for Settings {
             quick_paste: true,
             opacity: 90,
             theme: "system".to_string(),
+            reset_filter_on_show: false,
         }
     }
 }
@@ -94,8 +97,14 @@ pub fn start(app: &AppHandle) {
     state::set_max_items(current.max_items);
     save();
     println!(
-        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={}",
-        current.hotkey, current.max_items, current.language, current.quick_paste, current.opacity, current.theme
+        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={} 显示时重置筛选={}",
+        current.hotkey,
+        current.max_items,
+        current.language,
+        current.quick_paste,
+        current.opacity,
+        current.theme,
+        current.reset_filter_on_show
     );
 }
 
@@ -157,13 +166,62 @@ pub fn cmd_set_settings(app: AppHandle, settings: Settings) -> Result<Settings, 
     }
 
     klog!(
-        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={}",
+        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={} 显示时重置筛选={}",
         next.hotkey,
         next.max_items,
         next.language,
         next.quick_paste,
         next.opacity,
-        next.theme
+        next.theme,
+        next.reset_filter_on_show
     );
     Ok(next)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 老版本写下的 settings.json 里没有新字段:必须仍能解析,且新字段取默认值。
+    /// 这是"加字段不能把用户设置弄丢/弄坏"的底线。
+    #[test]
+    fn old_settings_file_still_parses() {
+        let old = br#"{"hotkey":"Ctrl+Shift+V","max_items":300,"language":"en",
+            "quick_paste":false,"opacity":80,"theme":"dark"}"#;
+        let parsed: Settings = serde_json::from_slice(old).expect("老文件应当能解析");
+
+        assert_eq!(parsed.hotkey, "Ctrl+Shift+V");
+        assert_eq!(parsed.max_items, 300);
+        assert_eq!(parsed.language, "en");
+        assert!(!parsed.quick_paste);
+        assert_eq!(parsed.opacity, 80);
+        assert_eq!(parsed.theme, "dark");
+        assert!(
+            !parsed.reset_filter_on_show,
+            "缺字段时应当取默认值(默认关,保持老行为)"
+        );
+    }
+
+    /// 新开关能落盘并读回
+    #[test]
+    fn reset_filter_flag_round_trips() {
+        let mut settings = Settings::default();
+        settings.reset_filter_on_show = true;
+
+        let json = serde_json::to_vec(&settings).expect("序列化");
+        let back: Settings = serde_json::from_slice(&json).expect("反序列化");
+        assert!(back.reset_filter_on_show);
+    }
+
+    /// sanitize 只管取值范围,不该把这个开关弄丢
+    #[test]
+    fn sanitize_keeps_the_new_flag() {
+        let mut settings = Settings::default();
+        settings.reset_filter_on_show = true;
+        settings.opacity = 10; // 越界,会被拉回来
+
+        let fixed = sanitize(settings);
+        assert!(fixed.reset_filter_on_show, "sanitize 不该丢掉这个开关");
+        assert_eq!(fixed.opacity, MIN_OPACITY);
+    }
 }
