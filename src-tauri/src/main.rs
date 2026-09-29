@@ -304,24 +304,52 @@ fn cmd_open_path(path: String) -> Result<(), String> {
     result
 }
 
+/// 启动一个"打开器"子进程,并把它交给后台专职线程回收,返回子进程 pid。
+///
+/// **不能 `spawn()` 之后直接丢掉 `Child`**:Rust 的 `Child` 没有 Drop 实现,
+/// 子进程退出后不会被 `wait`,会在进程表里留下一个僵尸(defunct)条目。
+/// 本应用是常驻不退出的(靠全局热键唤起),这类条目会随"打开文件/定位文件"的
+/// 使用次数一直累积。
+///
+/// 也**不能就地 `wait()`**:`open`/`xdg-open` 在部分桌面会等到被打开的程序退出
+/// 才返回,"不能阻塞命令线程"正是当初改成 spawn 的原因。所以把回收挪到独立线程,
+/// 两边都不牺牲。
+///
+/// 返回 pid 只是为了日志/测试能引用它;调用方可直接 `.map(|_| ())` 忽略。
+fn spawn_detached(command: &mut std::process::Command) -> Result<u32, String> {
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let pid = child.id();
+    std::thread::spawn(move || {
+        // 只为回收:退出码不关心。stdio 是继承的,没有管道需要读,不会阻塞在 wait 上。
+        let _ = child.wait();
+    });
+    Ok(pid)
+}
+
 fn open_with_system(path: &str) -> Result<(), String> {
-    // spawn 而不是 wait:打开器是 GUI 程序,不能阻塞命令线程
     #[cfg(target_os = "macos")]
-    std::process::Command::new("open")
-        .arg(path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(path);
+        spawn_detached(&mut cmd).map(|_| ())
+    }
     #[cfg(target_os = "linux")]
-    std::process::Command::new("xdg-open")
-        .arg(path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(path);
+        spawn_detached(&mut cmd).map(|_| ())
+    }
     #[cfg(target_os = "windows")]
-    std::process::Command::new("explorer")
-        .arg(path)
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+    {
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg(path);
+        spawn_detached(&mut cmd).map(|_| ())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        let _ = path;
+        Err("当前平台不支持用系统程序打开文件".to_string())
+    }
 }
 
 /// 自启动 .desktop 文件的路径(设置界面提示用户"写到哪里了")
@@ -342,12 +370,13 @@ fn cmd_reveal_file(app: tauri::AppHandle, path: String) -> Result<(), String> {
     // 先收起自己的窗口,别挡住弹出来的文件管理器
     hide_main(&app);
     #[cfg(target_os = "macos")]
-    let result = std::process::Command::new("open")
-        .arg("-R")
-        .arg(&real)
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| format!("在 Finder 中定位失败: {e}"));
+    let result = {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg("-R").arg(&real);
+        spawn_detached(&mut cmd)
+            .map(|_| ())
+            .map_err(|e| format!("在 Finder 中定位失败: {e}"))
+    };
     #[cfg(target_os = "linux")]
     let result = {
         let dir = p
@@ -478,5 +507,64 @@ pub fn toggle_main_window(app: &tauri::AppHandle) {
     } else {
         klog!("[窗口] 热键切换: 可见={visible} 是活动窗口={focused} → 显示并前置");
         show_main(app);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    /// 指定 pid 是否还在进程表里。
+    ///
+    /// 关键点:**僵尸进程仍然在进程表里**,只有被 `wait` 回收之后才消失。
+    /// 所以"消失"就等于"被回收了"。
+    #[cfg(unix)]
+    fn child_exists(pid: u32) -> bool {
+        // Linux:/proc/<pid> 在回收后立刻消失(僵尸则一直存在)
+        #[cfg(target_os = "linux")]
+        if std::path::Path::new("/proc/self").exists() {
+            return std::path::Path::new(&format!("/proc/{pid}")).exists();
+        }
+        // macOS(以及没有 /proc 的 Linux 容器)退回 ps:进程不存在时输出为空
+        std::process::Command::new("ps")
+            .arg("-p")
+            .arg(pid.to_string())
+            .arg("-o")
+            .arg("state=")
+            .output()
+            .map(|out| !String::from_utf8_lossy(&out.stdout).trim().is_empty())
+            .unwrap_or(false)
+    }
+
+    /// `spawn_detached` 必须真的回收子进程:只 spawn 不 wait 的话,子进程退出后会
+    /// 变成僵尸(defunct)常驻进程表 —— 常驻应用积累下去就是资源泄漏。
+    #[cfg(unix)]
+    #[test]
+    fn detached_child_is_reaped() {
+        // 让子进程活一小会儿,好观察到"存在 → 消失"的完整过程:
+        // 若直接 exit 0,回收线程可能在第一次探测之前就把它收掉,反而看不出区别。
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.arg("-c").arg("sleep 0.4");
+        let pid = super::spawn_detached(&mut cmd).expect("启动子进程");
+
+        // 1) 先确认它确实起来了(否则"消失"毫无意义)
+        let appear_deadline = Instant::now() + Duration::from_secs(5);
+        while !child_exists(pid) {
+            assert!(
+                Instant::now() < appear_deadline,
+                "子进程 {pid} 没有出现在进程表里"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // 2) 它退出后必须从进程表消失(没被回收的话会一直以 Z 状态留着)
+        let gone_deadline = Instant::now() + Duration::from_secs(5);
+        while child_exists(pid) {
+            assert!(
+                Instant::now() < gone_deadline,
+                "子进程 {pid} 退出后仍留在进程表里:未被 wait 回收(僵尸)"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
