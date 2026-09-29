@@ -45,6 +45,58 @@ struct PersistFile {
     items: Vec<ClipboardRecord>,
 }
 
+/// 发给前端的记录视图。
+///
+/// 与 `ClipboardRecord` 的区别:
+/// - **不含 `html`**:富文本原文只在粘贴回写(clipboard_service/paste)与落盘时用,
+///   前端从头到尾没读过它,送过去只是白占 WebView 的 JS 堆(单条可达 64K 字符)。
+/// - **`text` 截成预览**:列表只展示第一行、搜索也只在预览范围内;
+///   完整文本仍留在后端,粘贴时前端只传 id、后端按 id 取完整记录。
+#[derive(Serialize, Clone)]
+pub struct RecordView {
+    pub id: u64,
+    pub kind: String,
+    pub text: Option<String>,
+    pub files: Option<Vec<String>>,
+    pub image_path: Option<String>,
+    pub hash: String,
+    pub created_at: u64,
+    pub source_app: Option<String>,
+    pub group: Option<String>,
+    pub favorite: bool,
+}
+
+/// 发给前端的 text 预览上限(字符)。远大于列表标题所需,又足以覆盖搜索;
+/// 完整文本不丢,只是不再进 WebView。
+const PREVIEW_TEXT_CHARS: usize = 4_000;
+
+fn preview_text(text: &Option<String>) -> Option<String> {
+    text.as_ref().map(|t| {
+        if t.chars().count() > PREVIEW_TEXT_CHARS {
+            t.chars().take(PREVIEW_TEXT_CHARS).collect()
+        } else {
+            t.clone()
+        }
+    })
+}
+
+impl From<&ClipboardRecord> for RecordView {
+    fn from(rec: &ClipboardRecord) -> Self {
+        Self {
+            id: rec.id,
+            kind: rec.kind.clone(),
+            text: preview_text(&rec.text),
+            files: rec.files.clone(),
+            image_path: rec.image_path.clone(),
+            hash: rec.hash.clone(),
+            created_at: rec.created_at,
+            source_app: rec.source_app.clone(),
+            group: rec.group.clone(),
+            favorite: rec.favorite,
+        }
+    }
+}
+
 static HISTORY: Lazy<Mutex<VecDeque<ClipboardRecord>>> =
     Lazy::new(|| Mutex::new(VecDeque::new()));
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -269,11 +321,12 @@ fn trim(hist: &mut VecDeque<ClipboardRecord>, limit: usize) {
 pub fn push_and_emit(app: &AppHandle, rec: ClipboardRecord) {
     let rec = insert_record(&mut HISTORY.lock(), rec);
     mark_dirty();
-    let _ = app.emit_all("clipboard-updated", rec);
+    let _ = app.emit_all("clipboard-updated", RecordView::from(&rec));
 }
 
-pub fn get_all() -> Vec<ClipboardRecord> {
-    HISTORY.lock().iter().cloned().collect()
+/// 全部记录的前端视图(在锁内直接映射,不再整条克隆一遍)
+pub fn get_all_views() -> Vec<RecordView> {
+    HISTORY.lock().iter().map(RecordView::from).collect()
 }
 
 pub fn get_by_id(id: u64) -> Option<ClipboardRecord> {
@@ -427,14 +480,17 @@ pub fn cmd_get_asset_dirs(app: AppHandle) -> Option<AssetDirs> {
 }
 
 #[tauri::command]
-pub fn cmd_get_history() -> Vec<ClipboardRecord> {
-    get_all()
+pub fn cmd_get_history() -> Vec<RecordView> {
+    get_all_views()
 }
 
 /// 收藏 / 取消收藏一条记录
 #[tauri::command]
-pub fn cmd_set_favorite(id: u64, favorite: bool) -> Result<ClipboardRecord, String> {
-    set_favorite(id, favorite).ok_or_else(|| "记录不存在".to_string())
+pub fn cmd_set_favorite(id: u64, favorite: bool) -> Result<RecordView, String> {
+    set_favorite(id, favorite)
+        .as_ref()
+        .map(RecordView::from)
+        .ok_or_else(|| "记录不存在".to_string())
 }
 
 /// 把前端旧版存在 localStorage 里的收藏导入到记录上(启动时调一次)
@@ -445,8 +501,11 @@ pub fn cmd_import_favorites(hashes: Vec<String>) -> usize {
 
 /// 给一条记录指定分组(传 null/空串 = 取消分组)
 #[tauri::command]
-pub fn cmd_set_group(id: u64, group: Option<String>) -> Result<ClipboardRecord, String> {
-    set_group(id, group).ok_or_else(|| "记录不存在".to_string())
+pub fn cmd_set_group(id: u64, group: Option<String>) -> Result<RecordView, String> {
+    set_group(id, group)
+        .as_ref()
+        .map(RecordView::from)
+        .ok_or_else(|| "记录不存在".to_string())
 }
 
 /// 删除若干条记录(含磁盘图片),返回实际删除的条数
