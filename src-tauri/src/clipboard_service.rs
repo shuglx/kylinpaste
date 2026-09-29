@@ -226,36 +226,34 @@ pub(crate) fn normalize_file_entry(entry: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// 本地路径 → 百分号编码的 file:// URI。
-/// set_files 对 file:// 开头的条目原样保留,所以编码由我们负责:
-/// 中文/空格路径不编码的话,严格解析 URI 的应用会拒绝。
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-pub(crate) fn file_uri(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("file://") {
-        return format!("file://{rest}");
-    }
-    let mut out = String::from("file://");
-    for &b in path.as_bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
 /// 文件类剪贴板内容(Linux):
 /// - `text/uri-list` + `x-special/gnome-copied-files`:标准文件粘贴通道(文件管理器读这两个)
-/// - `UTF8_STRING` 写成 file:// URI:OA 类客户端读文本目标,**以 file:// 开头才触发
-///   "上传文件"**,裸路径只会被当成普通文本(1.1.0 在麒麟 OA 上实测)
-/// 注意 set() 的服务端按"第一个匹配 atom"应答,所以 Text 必须排在 Files 前面,
-/// 让 UTF8_STRING 命中 file:// URI 而不是 Files 附带的裸路径。
-#[cfg(target_os = "linux")]
+/// - `UTF8_STRING` 写成 **`file://` + 原始路径**:OA 类客户端读文本目标,
+///   以 `file://` 开头才触发"上传文件"(1.1.0 在麒麟 OA 上实测),裸路径会被当普通文本。
+///
+/// **路径必须保持原样,不能百分号编码**——OA 拿这串字符串直接当本地路径去找文件,
+/// `file:///…/%E3%80%90%E6%89%8B%E5%86%8C%E3%80%91…` 在磁盘上并不存在,于是它退化成
+/// "粘一段文本"、不弹上传框(1.6.x 在麒麟 OA 上实测:中文路径不编码才触发)。
+/// 这与"标准 `file://` URI 要求非 ASCII 百分号编码"是冲突的,这里以能触发上传为准;
+/// 真正的 URI 语义由 `text/uri-list` 那条通道承担。
+///
+/// 注意 set() 的服务端按"第一个匹配 atom"应答,所以 Text 必须排在 Files 前面:
+/// Files 自己也会写一份 UTF8_STRING,但内容是**裸路径**(无 `file://`),要被这里盖住。
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub(crate) fn file_clipboard_payload(paths: &[String]) -> Vec<clipboard_rs::ClipboardContent> {
     use clipboard_rs::ClipboardContent;
-    let uri_text = paths.iter().map(|p| file_uri(p)).collect::<Vec<_>>().join("\r\n");
+    let uri_text = paths
+        .iter()
+        .map(|p| {
+            // 已是 URI 的原样保留(旧记录里可能是 file:// 开头),否则补前缀
+            if p.starts_with("file://") {
+                p.clone()
+            } else {
+                format!("file://{p}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n");
     vec![
         ClipboardContent::Text(uri_text),
         ClipboardContent::Files(paths.to_vec()),
@@ -369,13 +367,36 @@ mod tests {
         assert!(html_has_visible_text("没有标签的纯文本片段"));
     }
 
-    /// file:// URI 编码:中文/空格正确转义,已是 URI 的原样保留
+    /// Linux 文件粘贴的文本目标:**file:// + 原始路径,不做百分号编码**。
+    /// 回归点——编码过的路径在麒麟 OA 上既触发不了上传,还会被当普通文本粘出去。
     #[test]
-    fn file_uri_encoding() {
-        use super::file_uri;
-        assert_eq!(file_uri("/home/u/新建.docx"), "file:///home/u/%E6%96%B0%E5%BB%BA.docx");
-        assert_eq!(file_uri("/tmp/a b.png"), "file:///tmp/a%20b.png");
-        assert_eq!(file_uri("file:///already/encoded"), "file:///already/encoded");
+    fn file_payload_text_keeps_path_raw() {
+        use clipboard_rs::ClipboardContent;
+
+        let one = super::file_clipboard_payload(&["/home/u/新建 文档.docx".to_string()]);
+        let ClipboardContent::Text(text) = &one[0] else {
+            panic!("第一项必须是 Text:要盖住 Files 自带的那份裸路径 UTF8_STRING");
+        };
+        assert_eq!(text, "file:///home/u/新建 文档.docx");
+        assert!(!text.contains('%'), "中文/空格不能百分号编码");
+        assert!(
+            matches!(&one[1], ClipboardContent::Files(f) if f[0] == "/home/u/新建 文档.docx"),
+            "文件通道(uri-list/gnome)必须保留,否则粘不进文件管理器"
+        );
+
+        // 多文件按 uri-list 惯例用 CRLF 分隔;@ 【】 & 这类符号同样保持原样
+        let two = super::file_clipboard_payload(&[
+            "/home/u/@工作@/【长期】/a&b.pptx".to_string(),
+            "file:///tmp/plain.txt".to_string(),
+        ]);
+        let ClipboardContent::Text(text) = &two[0] else {
+            panic!("第一项必须是 Text");
+        };
+        assert_eq!(
+            text,
+            "file:///home/u/@工作@/【长期】/a&b.pptx\r\nfile:///tmp/plain.txt"
+        );
+        assert!(!text.contains('%'), "已是 URI 的条目也不该被改写");
     }
 
     /// 文件条目归一化:file:// 前缀与百分号编码还原为本地路径(含中文/空格)
