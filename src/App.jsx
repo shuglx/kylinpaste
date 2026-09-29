@@ -384,8 +384,17 @@ export default function App() {
       const rec = event.payload;
       setItems((prev) => [rec, ...prev.filter((i) => i.hash !== rec.hash)].slice(0, 1200));
     });
+    // 粘贴过的记录:后端已把它挪到最前并刷新了时间戳,这里按同样规则重排
+    // (换位置 + 用新时间戳显示"刚刚",**不新增条目**)
+    const unlistenPromoted = listen('record-promoted', (event) => {
+      const rec = event.payload;
+      setItems((prev) =>
+        [rec, ...prev.filter((i) => i.id !== rec.id && i.hash !== rec.hash)].slice(0, 1200)
+      );
+    });
     return () => {
       unlisten.then((f) => f());
+      unlistenPromoted.then((f) => f());
     };
   }, []);
 

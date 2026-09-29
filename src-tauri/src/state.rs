@@ -453,6 +453,26 @@ pub fn get_by_id(id: u64) -> Option<SharedRecord> {
     HISTORY.lock().iter().find(|r| r.id == id).cloned()
 }
 
+/// 把一条记录挪到列表最前并刷新时间戳(**不产生新记录**)。
+///
+/// 用途:用户粘贴过的记录,应该像"刚复制过"一样回到顶部——下次呼出窗口第一眼就能
+/// 看到、第一下回车就能再粘一次。所以只挪位置 + 改 `created_at`,内容一字不动,
+/// 也不会多出一条(所以不经过 `insert_record` 的去重/继承逻辑)。
+pub fn promote(id: u64) -> Option<SharedRecord> {
+    let mut hist = HISTORY.lock();
+    let pos = hist.iter().position(|r| r.id == id)?;
+
+    let mut rec = hist.remove(pos).expect("position 刚返回过");
+    // 改时间戳要走写时复制:落盘快照、正在读取的粘贴链路可能还持有这一份
+    Arc::make_mut(&mut rec).created_at = now_ms();
+    hist.push_front(Arc::clone(&rec));
+    drop(hist);
+
+    // 顺序变了、时间戳也变了,要落盘
+    mark_dirty();
+    Some(rec)
+}
+
 /// 设置(或取消)收藏。收藏后不占"保留条数"上限,也不会被自动淘汰。
 pub fn set_favorite(id: u64, favorite: bool) -> Option<SharedRecord> {
     let mut hist = HISTORY.lock();
@@ -836,6 +856,44 @@ mod tests {
         assert_eq!(hist.iter().map(|r| r.id).collect::<Vec<_>>(), vec![keep.id]);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 粘贴后置顶:挪到最前 + 刷新时间戳,而且**不产生新记录**、内容不动
+    #[test]
+    fn promote_moves_to_front_and_refreshes_timestamp() {
+        let _s = GLOBAL_STATE_LOCK.lock();
+        let first = insert("h-p1", "a");
+        insert("h-p2", "b");
+        insert("h-p3", "c"); // 最新的在最前
+
+        // 把目标记录的时间戳改成明显很旧的值,便于断言"被刷新过"
+        {
+            let mut hist = HISTORY.lock();
+            let pos = hist.iter().position(|r| r.id == first.id).expect("它在历史里");
+            Arc::make_mut(&mut hist[pos]).created_at = 1;
+        }
+        let count_before = HISTORY.lock().len();
+
+        let promoted = promote(first.id).expect("应当能置顶");
+
+        assert_eq!(promoted.id, first.id);
+        assert!(
+            promoted.created_at > 1_600_000_000_000,
+            "时间戳应当被刷新成当前时刻"
+        );
+        assert_eq!(promoted.text.as_deref(), Some("a"), "内容不该被改动");
+        assert_eq!(HISTORY.lock().len(), count_before, "置顶不该产生新记录");
+
+        // 顺序:被置顶的到最前,其余保持相对顺序(只挑本用例插入的那几条)
+        let order: Vec<String> = HISTORY
+            .lock()
+            .iter()
+            .filter(|r| r.hash.starts_with("h-p"))
+            .map(|r| r.hash.clone())
+            .collect();
+        assert_eq!(order, vec!["h-p1", "h-p3", "h-p2"]);
+
+        assert!(promote(999_999_999).is_none(), "id 不存在时返回 None");
     }
 
     /// 分组名:去空白、超长截断、空白等于取消分组

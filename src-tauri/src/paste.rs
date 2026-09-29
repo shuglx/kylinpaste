@@ -4,8 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use clipboard_rs::{Clipboard, ClipboardContent};
-#[allow(unused_imports)] // Manager 只在非 macOS 分支里用(get_window)
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager}; // Manager:非 macOS 的 get_window + 各平台的 emit_all
 
 use crate::clipboard_service;
 use crate::klog;
@@ -76,7 +75,7 @@ pub fn cmd_paste_plain(app: AppHandle, id: u64) -> Result<(), String> {
         klog!("[粘贴] 已有粘贴在进行,忽略纯文本粘贴请求(id={id})");
         return Ok(());
     };
-    match state::get_by_id(id) {
+    let result = match state::get_by_id(id) {
         Some(rec) => {
             let r = paste_record_plain(&app, &rec);
             if let Err(e) = &r {
@@ -85,7 +84,12 @@ pub fn cmd_paste_plain(app: AppHandle, id: u64) -> Result<(), String> {
             r
         }
         None => Err("记录不存在".into()),
+    };
+    // 纯文本粘贴同样是"用了这条记录",一样置顶(与普通粘贴保持一致)
+    if result.is_ok() {
+        promote_after_paste(&app, id);
     }
+    result
 }
 
 #[tauri::command(async)]
@@ -94,7 +98,26 @@ pub fn cmd_paste_item(app: AppHandle, id: u64) -> Result<(), String> {
         klog!("[粘贴] 已有粘贴在进行,忽略本次请求(id={id})");
         return Ok(());
     };
-    do_paste_item(&app, id)
+    let result = do_paste_item(&app, id);
+    if result.is_ok() {
+        promote_after_paste(&app, id);
+    }
+    result
+}
+
+/// 粘贴成功后把这条记录挪到列表最前、刷新时间戳(不产生新记录),再通知前端重排。
+///
+/// 只在**成功**时做:失败时窗口会被重新显示出来,列表不该发生位移。
+/// 前端收到 `record-promoted` 后按同样的规则重排(移动 + 用新时间戳,不新增条目)。
+fn promote_after_paste(app: &AppHandle, id: u64) {
+    match state::promote(id) {
+        Some(rec) => {
+            klog!("[粘贴] 已把 id={id} 挪到列表最前并刷新时间戳");
+            let _ = app.emit_all("record-promoted", state::RecordView::from(&rec));
+        }
+        // 极少数情况:粘贴链路走完时这条已经被淘汰/删除了
+        None => klog!("[粘贴] 想在粘贴后置顶 id={id},但这条已不在历史里"),
+    }
 }
 
 fn do_paste_item(app: &AppHandle, id: u64) -> Result<(), String> {
