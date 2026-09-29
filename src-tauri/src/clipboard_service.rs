@@ -158,7 +158,9 @@ fn capture_with(
     // 所以这里必须把空内容归一成 None。否则遇到只提供 image/bmp 这类非 PNG 图片、
     // 或者只提供私有格式的剪贴板时,会凭空多出一条空白记录(实测 Xvfb + image/bmp 可复现)。
     let html = ctx.get_html().ok().filter(|h| !h.trim().is_empty());
-    let text = ctx.get_text().ok().filter(|t| !t.trim().is_empty());
+    // 空白文本(纯换行/空格)也保留:列表要把「(空) + 共N行」展示出来;
+    // 这里只把"彻底的空串"归一成 None(X11 下读不到目标格式会得到 Ok("")),避免凭空多出空白记录
+    let text = ctx.get_text().ok().filter(|t| !t.is_empty());
 
     // 文字优先于图片:Word/LibreOffice/WPS 复制**文字**时,还会顺带在剪贴板放一份
     // "渲染成位图"的副本(image/png 或 image/bmp),光看"有没有图"会把复制文字误判成截图。

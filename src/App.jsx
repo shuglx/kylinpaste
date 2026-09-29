@@ -82,9 +82,9 @@ const kindIcon = (rec) => {
 
 const lines = (s) => (s || '').split('\n').map((x) => x.trim()).filter(Boolean);
 
-/** 一行记录展示成:标题 + 副标题,副标题是「类型 · 来源应用」(+ 分组小标签)。
+/** 一行记录展示成:标题 + 灰色辅助信息(aux) + 副标题,副标题是「类型 · 来源应用」(+ 分组小标签)。
  *  标题一律由后端给:
- *  截图 = 「截图「长 × 宽」」,图片文件/文件 = 「文件名「所在目录」」,文字 = 第一行。 */
+ *  截图 = 「截图「长 × 宽」」,图片文件/文件 = 「文件名「所在目录」」,文字 = 首个有内容行(多行时附带总行数)。 */
 function rowText(rec, t) {
   const label =
     rec.kind === 'image'
@@ -97,10 +97,16 @@ function rowText(rec, t) {
   const sub = rec.source_app ? `${label} · ${rec.source_app}` : label;
 
   if (rec.kind === 'image' || rec.kind === 'files') {
-    return { title: rec.text || label, sub };
+    // 标题尾部的「路径/尺寸」拆成灰色辅助信息
+    const m = /^(.*?)「([^」]*)」$/.exec(rec.text || '');
+    return { title: m ? m[1] : rec.text || label, aux: m && m[2], sub };
   }
-  // 文字/富文本:只显示第一行,超长由 CSS 省略号处理
-  return { title: lines(rec.text)[0] || t.blank, sub };
+  // 文字/富文本:标题取首个有内容的行,超长由 CSS 省略号处理;全空白时显示「(空)」。
+  // 总行数按换行切分(空行也算,结尾换行不算新行);多行时尾部附灰色「共N行」
+  const norm = (rec.text || '').replace(/\r\n?/g, '\n');
+  const total = norm ? norm.split('\n').length - (norm.endsWith('\n') ? 1 : 0) : 0;
+  const first = lines(rec.text)[0];
+  return { title: first || t.blank, aux: total > 1 ? t.lineCount(total) : undefined, sub };
 }
 
 function timeAgo(ms, t) {
@@ -1043,11 +1049,7 @@ export default function App() {
         )}
 
         {visible.slice(0, 200).map((rec, idx) => {
-          const { title, sub } = rowText(rec, t);
-          // 图片/文件的标题尾部带「路径/尺寸」辅助信息,拆出来用灰色弱化
-          const titleAux = /^(.*?)「([^」]*)」$/.exec(
-            rec.kind === 'image' || rec.kind === 'files' ? title : ''
-          );
+          const { title, aux, sub } = rowText(rec, t);
           const fav = Boolean(rec.favorite);
           return (
             <div
@@ -1063,14 +1065,8 @@ export default function App() {
               </Thumb>
               <div className="main">
                 <div className="title">
-                  {titleAux ? (
-                    <>
-                      {titleAux[1]}
-                      <span className="title-aux">「{titleAux[2]}」</span>
-                    </>
-                  ) : (
-                    title
-                  )}
+                  <span className="title-text">{title}</span>
+                  {aux && <span className="title-aux">「{aux}」</span>}
                 </div>
                 <div className="sub">
                   <span className="sub-text">{sub}</span>

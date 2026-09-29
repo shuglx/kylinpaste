@@ -353,15 +353,23 @@ button:focus,
 }
 
 .title {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
+}
+/* 标题文字自己省略,辅助信息(行数/尺寸/路径)固定在尾部不被挤掉 */
+.title .title-text {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 /* 文件路径/截图尺寸这类「辅助信息」用灰色弱化 */
 .title .title-aux {
+  flex-shrink: 0;
   font-weight: 500;
   color: var(--muted);
 }
