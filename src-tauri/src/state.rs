@@ -302,18 +302,46 @@ fn is_transient(rec: &ClipboardRecord) -> bool {
     !rec.favorite && rec.group.is_none()
 }
 
-/// 按"临时记录不超过 limit 条"裁剪:只从最旧的一端淘汰临时记录,
-/// 收藏/分组过的记录一律保留(与界面上"清理临时记录"的规则保持一致)。
-fn trim(hist: &mut VecDeque<ClipboardRecord>, limit: usize) {
+/// 选出该被"保留上限"淘汰的记录下标:只挑临时记录,从最旧的一端开始。
+///
+/// 与 `trim` 分开是为了能单测:`trim` 还要删磁盘文件,依赖全局数据目录。
+/// 返回的下标**从大到小**(从队尾往前扫),调用方按这个顺序删不会串位。
+fn eviction_indices(hist: &VecDeque<ClipboardRecord>, limit: usize) -> Vec<usize> {
     let transient = hist.iter().filter(|rec| is_transient(rec)).count();
     let mut excess = transient.saturating_sub(limit);
+    let mut indices = Vec::new();
     let mut index = hist.len();
     while excess > 0 && index > 0 {
         index -= 1;
         if is_transient(&hist[index]) {
-            hist.remove(index);
+            indices.push(index);
             excess -= 1;
         }
+    }
+    indices
+}
+
+/// 按"临时记录不超过 limit 条"裁剪:只从最旧的一端淘汰临时记录,
+/// 收藏/分组过的记录一律保留(与界面上"清理临时记录"的规则保持一致)。
+///
+/// 被淘汰的记录会**连同它在数据目录里的图片与缩略图一起删掉**——只从内存里
+/// 淘汰而文件留在盘上,长期使用下就是"记录越淘汰、磁盘越涨"。
+fn trim(hist: &mut VecDeque<ClipboardRecord>, limit: usize) {
+    let indices = eviction_indices(hist, limit);
+    if indices.is_empty() {
+        return;
+    }
+    let mut evicted = Vec::with_capacity(indices.len());
+    for index in indices {
+        if let Some(rec) = hist.remove(index) {
+            evicted.push(rec);
+        }
+    }
+
+    // 还留在历史里的图片路径:这些文件不能删(同一张图只会有一条记录,这里再兜一层)
+    let alive: Vec<String> = hist.iter().filter_map(|r| r.image_path.clone()).collect();
+    for rec in &evicted {
+        remove_record_files(rec, &alive);
     }
 }
 
@@ -586,6 +614,112 @@ mod tests {
         assert!(!ids.contains(&oldest.id), "最旧的临时记录先淘汰");
         assert!(ids.contains(&newest.id), "最新的临时记录保留");
         assert_eq!(hist.iter().filter(|r| is_transient(r)).count(), 1);
+    }
+
+    /// 淘汰选择:只挑临时记录、从最旧的一端开始(trim 删磁盘文件直接复用这个结果);
+    /// 返回的下标必须互不重叠,且按从大到小给出——调用方按序 remove 才不会串位。
+    #[test]
+    fn eviction_picks_oldest_transient_only() {
+        let mut hist = VecDeque::new();
+        let oldest = insert_record(&mut hist, rec("h-ev1", "1"));
+        let fav = insert_record(&mut hist, rec("h-ev2", "2"));
+        let grp = insert_record(&mut hist, rec("h-ev3", "3"));
+        let newest = insert_record(&mut hist, rec("h-ev4", "4"));
+        for r in hist.iter_mut() {
+            if r.id == fav.id {
+                r.favorite = true;
+            }
+            if r.id == grp.id {
+                r.group = Some("web".into());
+            }
+        }
+
+        // 上限内不淘汰
+        assert!(eviction_indices(&hist, 5).is_empty());
+        assert!(eviction_indices(&hist, 2).is_empty(), "刚好 2 条临时记录");
+
+        // 上限 1 → 只淘汰最旧的临时记录,收藏/分组的不动
+        let indices = eviction_indices(&hist, 1);
+        assert_eq!(indices.len(), 1);
+        assert_eq!(hist[indices[0]].id, oldest.id, "淘汰最旧的临时记录");
+        assert!(indices[0] < hist.len(), "下标必须可用");
+        assert!(indices.windows(2).all(|w| w[0] > w[1]), "下标按从大到小给出");
+
+        // 上限 0 → 两条临时记录都淘汰,仍不动收藏/分组
+        let indices = eviction_indices(&hist, 0);
+        assert_eq!(indices.len(), 2);
+        let evicted: Vec<u64> = indices.iter().map(|i| hist[*i].id).collect();
+        assert!(evicted.contains(&oldest.id) && evicted.contains(&newest.id));
+        assert!(!evicted.contains(&fav.id) && !evicted.contains(&grp.id));
+    }
+
+    /// trim 淘汰记录时会把它们带走,并且裁掉的文件不会牵连还留着的记录
+    /// (数据目录未初始化时不碰磁盘,只验证内存结果)
+    #[test]
+    fn trim_removes_evicted_from_history() {
+        let mut hist = VecDeque::new();
+        let a = insert_record(&mut hist, rec("h-tm1", "a"));
+        let b = insert_record(&mut hist, rec("h-tm2", "b"));
+        let c = insert_record(&mut hist, rec("h-tm3", "c"));
+
+        trim(&mut hist, 2);
+
+        let left: Vec<u64> = hist.iter().map(|r| r.id).collect();
+        assert_eq!(left.len(), 2);
+        assert!(!left.contains(&a.id), "最旧的被淘汰");
+        assert!(left.contains(&b.id) && left.contains(&c.id));
+    }
+
+    /// 真正落盘的验证:淘汰时图片与缩略图必须从数据目录删掉,
+    /// 而仍留在历史里的记录(收藏保护)的文件绝不能碰。
+    #[test]
+    fn trim_deletes_evicted_files_only() {
+        let dir = std::env::temp_dir().join(format!("kp-trim-{}", std::process::id()));
+        let images = dir.join("clipboard_images");
+        let thumbs = images.join("thumbs");
+        std::fs::create_dir_all(&thumbs).expect("建测试目录");
+
+        // 会被淘汰的临时记录:图片 + 缩略图
+        let gone_hash = "0123456789abcdef".to_string() + &"a".repeat(48);
+        let gone_rel = "clipboard_images/0123456789abcdef.png".to_string();
+        let gone_img = dir.join(&gone_rel);
+        let gone_thumb = thumbs.join("0123456789abcdef.png");
+        std::fs::write(&gone_img, b"fake").unwrap();
+        std::fs::write(&gone_thumb, b"fake").unwrap();
+        let mut evict = rec("x", "会被淘汰");
+        evict.hash = gone_hash;
+        evict.image_path = Some(gone_rel);
+
+        // 收藏保护、不会被淘汰的记录:它的文件必须留下
+        let keep_hash = "ffffffffffffffff".to_string() + &"b".repeat(48);
+        let keep_rel = "clipboard_images/ffffffffffffffff.png".to_string();
+        let keep_img = dir.join(&keep_rel);
+        let keep_thumb = thumbs.join("ffffffffffffffff.png");
+        std::fs::write(&keep_img, b"fake").unwrap();
+        std::fs::write(&keep_thumb, b"fake").unwrap();
+        let mut keep = rec("y", "会被保留");
+        keep.hash = keep_hash;
+        keep.image_path = Some(keep_rel);
+        keep.favorite = true;
+
+        let mut hist = VecDeque::new();
+        hist.push_back(keep.clone()); // 旧
+        hist.push_back(evict); // 新
+
+        *DATA_DIR.lock() = Some(dir.clone());
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            trim(&mut hist, 0); // 上限 0 → 临时记录全淘汰
+        }));
+        *DATA_DIR.lock() = None; // 立刻复位,别影响并行跑的其它用例
+
+        assert!(result.is_ok(), "trim 不应 panic");
+        assert!(!gone_img.exists(), "被淘汰记录的图片必须删掉");
+        assert!(!gone_thumb.exists(), "被淘汰记录的缩略图必须删掉");
+        assert!(keep_img.exists(), "仍在历史里的图片不能被删");
+        assert!(keep_thumb.exists(), "仍在历史里的缩略图不能被删");
+        assert_eq!(hist.iter().map(|r| r.id).collect::<Vec<_>>(), vec![keep.id]);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 分组名:去空白、超长截断、空白等于取消分组
