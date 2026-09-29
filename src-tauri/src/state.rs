@@ -5,7 +5,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use tauri::{AppHandle, Manager};
 
 /// 一条剪贴板记录
@@ -102,8 +102,17 @@ static HISTORY: Lazy<Mutex<VecDeque<ClipboardRecord>>> =
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 static SUPPRESS_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 
-/// 有改动待落盘
-static DIRTY: AtomicBool = AtomicBool::new(false);
+/// 每次"有改动"自增(见 `mark_dirty`)。
+///
+/// 用**计数**而不是布尔:布尔只有一位,"有待落盘的改动"和"上次失败还没写成功"
+/// 会是同一个状态,失败时只能把标志位置回去,于是磁盘满/只读时每 500ms 空转重试
+/// 一次全量序列化。拆成"当前版本 / 已落盘版本"后,这两个状态天然可区分。
+static CHANGE_SEQ: AtomicU64 = AtomicU64::new(0);
+/// 已经成功落盘的版本(由 `save()` 在写成功后推进)
+static SAVED_SEQ: AtomicU64 = AtomicU64::new(0);
+/// 落盘互斥:退出前的收尾落盘可能与后台线程的落盘撞上——两者写的是同一个
+/// 临时文件(`history.json.tmp`),不串行化就可能互相写坏
+static SAVE_LOCK: Mutex<()> = Mutex::new(());
 /// 应用数据目录(启动时确定)
 static DATA_DIR: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 
@@ -160,6 +169,8 @@ const HISTORY_FILE: &str = "history.json";
 const PERSIST_VERSION: u32 = 1;
 /// 变更后延迟多久落盘(连续复制只写一次)
 const SAVE_DEBOUNCE_MS: u64 = 500;
+/// 落盘连续失败后的最大退避间隔
+const SAVE_RETRY_MAX_MS: u64 = 30_000;
 
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -183,13 +194,32 @@ pub fn start_persistence(app: &AppHandle) {
     }
 
     load();
+    // 载入时可能裁剪过记录、把坏 html 修成了纯文本:把归一化后的结果固化下来
+    mark_dirty();
 
-    std::thread::spawn(|| loop {
-        std::thread::sleep(std::time::Duration::from_millis(SAVE_DEBOUNCE_MS));
-        if DIRTY.swap(false, Ordering::SeqCst) {
-            if let Err(e) = save() {
-                eprintln!("[持久化] 写入历史失败: {e}");
-                DIRTY.store(true, Ordering::SeqCst); // 下次再试
+    std::thread::spawn(|| {
+        // 连续失败次数,用于退避;成功或无事可做时归零
+        let mut failures: u32 = 0;
+        loop {
+            // 正常按 500ms 去抖;上次失败则指数退避 1s、2s、4s…上限 30s,
+            // 免得磁盘满/只读时每 500ms 都白做一次全量序列化
+            let wait = if failures == 0 {
+                SAVE_DEBOUNCE_MS
+            } else {
+                (SAVE_DEBOUNCE_MS << failures.min(6)).min(SAVE_RETRY_MAX_MS)
+            };
+            std::thread::sleep(std::time::Duration::from_millis(wait));
+
+            if !has_pending() {
+                failures = 0;
+                continue;
+            }
+            match save() {
+                Ok(()) => failures = 0,
+                Err(e) => {
+                    failures = failures.saturating_add(1);
+                    eprintln!("[持久化] 写入历史失败(第 {failures} 次,{wait}ms 后重试): {e}");
+                }
             }
         }
     });
@@ -199,8 +229,28 @@ pub fn history_path() -> Option<PathBuf> {
     DATA_DIR.lock().as_ref().map(|dir| dir.join(HISTORY_FILE))
 }
 
+/// 标记"有改动待落盘"(只推版本号,不做任何 I/O)
 fn mark_dirty() {
-    DIRTY.store(true, Ordering::SeqCst);
+    CHANGE_SEQ.fetch_add(1, Ordering::SeqCst);
+}
+
+/// 有没有"改了但还没落盘"的内容
+fn has_pending() -> bool {
+    CHANGE_SEQ.load(Ordering::SeqCst) != SAVED_SEQ.load(Ordering::SeqCst)
+}
+
+/// 退出前把待落盘的改动同步写掉。
+///
+/// 落盘是 500ms 去抖的,`app.exit(0)` 之前不补这一次的话,最后这段窗口里的改动会丢
+/// (刚复制完就退出、刚点了收藏就退出都会命中)。调用方是"所有能让进程退出的路径"。
+pub fn flush_pending() {
+    if !has_pending() {
+        return;
+    }
+    match save() {
+        Ok(()) => println!("[持久化] 退出前已把待落盘的改动写入"),
+        Err(e) => eprintln!("[持久化] 退出前落盘失败,本次改动会丢: {e}"),
+    }
 }
 
 fn load() {
@@ -247,7 +297,16 @@ fn load() {
 }
 
 fn save() -> Result<(), String> {
+    // 后台线程与"退出前收尾落盘"可能同时进来,必须串行(见 SAVE_LOCK)
+    let _guard = SAVE_LOCK.lock();
+
+    // 版本要在取快照**之前**读:这样"没进快照的改动"版本一定比它大,
+    // 下一轮必然还会再写一次,不会漏;反过来读就可能把没写进去的改动记成已落盘
+    let version = CHANGE_SEQ.load(Ordering::SeqCst);
+
     let Some(path) = history_path() else {
+        // 没有数据目录(定位失败):无处可写,把版本推进掉,别让线程空转
+        SAVED_SEQ.store(version, Ordering::SeqCst);
         return Ok(());
     };
     let items: Vec<ClipboardRecord> = HISTORY.lock().iter().cloned().collect();
@@ -261,6 +320,8 @@ fn save() -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, &json).map_err(|e| format!("写入 {tmp:?} 失败: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("替换 {path:?} 失败: {e}"))?;
+
+    SAVED_SEQ.store(version, Ordering::SeqCst);
     Ok(())
 }
 
@@ -365,6 +426,12 @@ pub fn get_by_id(id: u64) -> Option<ClipboardRecord> {
 pub fn set_favorite(id: u64, favorite: bool) -> Option<ClipboardRecord> {
     let mut hist = HISTORY.lock();
     let rec = hist.iter_mut().find(|r| r.id == id)?;
+    if rec.favorite == favorite {
+        // 值没变:不置脏。否则每次"重复点收藏"都会白触发一次全量重写
+        let same = rec.clone();
+        drop(hist);
+        return Some(same);
+    }
     rec.favorite = favorite;
     let updated = rec.clone();
     drop(hist);
@@ -406,6 +473,12 @@ pub fn set_group(id: u64, group: Option<String>) -> Option<ClipboardRecord> {
 
     let mut hist = HISTORY.lock();
     let rec = hist.iter_mut().find(|r| r.id == id)?;
+    if rec.group == group {
+        // 值没变(比如在分组弹层里直接点确认):不置脏,免得白重写一遍 history.json
+        let same = rec.clone();
+        drop(hist);
+        return Some(same);
+    }
     rec.group = group;
     let updated = rec.clone();
     drop(hist);
@@ -571,9 +644,17 @@ mod tests {
         HISTORY.lock().iter().map(|r| r.id).collect()
     }
 
+    /// 全局可变状态(`HISTORY` / `DATA_DIR` / 落盘版本号)是进程级共享的。会改它们的
+    /// 用例必须彼此串行,否则会出现:A 用例设的 `DATA_DIR` 被 B 用例换掉;或者 B 用例
+    /// 的置脏动作让 A 用例"值没变就不该置脏"的断言假失败。
+    /// 只有"会改全局状态"的用例拿这把锁,其余用例照旧并行跑。
+    /// (parking_lot 的 Mutex 不中毒,某个用例 panic 不会连累其它用例)
+    static GLOBAL_STATE_LOCK: Mutex<()> = Mutex::new(());
+
     /// 同一份内容重新复制:分组与收藏都跟着内容走,不会因为去重置顶而丢
     #[test]
     fn dedupe_inherits_group_and_favorite() {
+        let _s = GLOBAL_STATE_LOCK.lock(); // 会置脏,见该锁的说明
         let first = insert("h-dedupe", "hello");
         set_group(first.id, Some("work".into()));
         set_favorite(first.id, true);
@@ -674,6 +755,7 @@ mod tests {
     /// 而仍留在历史里的记录(收藏保护)的文件绝不能碰。
     #[test]
     fn trim_deletes_evicted_files_only() {
+        let _env = GLOBAL_STATE_LOCK.lock(); // 要改全局 DATA_DIR,与同类用例串行
         let dir = std::env::temp_dir().join(format!("kp-trim-{}", std::process::id()));
         let images = dir.join("clipboard_images");
         let thumbs = images.join("thumbs");
@@ -725,6 +807,7 @@ mod tests {
     /// 分组名:去空白、超长截断、空白等于取消分组
     #[test]
     fn set_group_normalizes() {
+        let _s = GLOBAL_STATE_LOCK.lock(); // 会置脏,见该锁的说明
         let r = insert("h-group", "x");
 
         assert_eq!(
@@ -770,6 +853,7 @@ mod tests {
     /// 删除:只删给到的 id,其它记录不受影响
     #[test]
     fn remove_ids_is_selective() {
+        let _s = GLOBAL_STATE_LOCK.lock(); // 会置脏,见该锁的说明
         let a = insert("h-a", "a");
         let b = insert("h-b", "b");
         let c = insert("h-c", "c");
@@ -779,5 +863,59 @@ mod tests {
         assert!(left.contains(&a.id) && left.contains(&c.id));
         assert!(!left.contains(&b.id));
         assert_eq!(remove_ids(&[]), 0, "空列表不做任何事");
+    }
+
+    /// D2:收藏 / 分组的值没变时不该置脏。
+    /// 否则用户在分组弹层里直接点"确认"(分组根本没改)也会白触发一次 history.json 全量重写。
+    #[test]
+    fn unchanged_favorite_or_group_does_not_mark_dirty() {
+        let _s = GLOBAL_STATE_LOCK.lock(); // 断言期间若有别的用例置脏,这条会假失败
+        let r = insert("h-d2", "x");
+
+        set_favorite(r.id, true);
+        let after = CHANGE_SEQ.load(Ordering::SeqCst);
+        set_favorite(r.id, true); // 同值
+        assert_eq!(CHANGE_SEQ.load(Ordering::SeqCst), after, "收藏值没变不应置脏");
+        set_favorite(r.id, false); // 真变了
+        assert!(CHANGE_SEQ.load(Ordering::SeqCst) > after, "收藏值真变了必须置脏");
+
+        set_group(r.id, Some("web".into()));
+        let after = CHANGE_SEQ.load(Ordering::SeqCst);
+        set_group(r.id, Some("web".into())); // 同值
+        assert_eq!(CHANGE_SEQ.load(Ordering::SeqCst), after, "分组没变不应置脏");
+        set_group(r.id, Some("work".into())); // 真变了
+        assert!(CHANGE_SEQ.load(Ordering::SeqCst) > after, "分组真变了必须置脏");
+    }
+
+    /// 退出前的收尾落盘:500ms 去抖窗口内的改动不能丢。
+    /// 落盘是去抖的,直接 `exit(0)` 而不补一次 save,"刚复制完就退出"就会丢内容。
+    #[test]
+    fn flush_pending_writes_pending_changes() {
+        let _env = GLOBAL_STATE_LOCK.lock();
+        let dir = std::env::temp_dir().join(format!("kp-flush-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("建测试目录");
+        *DATA_DIR.lock() = Some(dir.clone());
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            // 模拟"刚改过、还没到去抖点"
+            insert_record(&mut HISTORY.lock(), rec("h-flush", "退出前这条必须落盘"));
+            mark_dirty();
+            assert!(has_pending(), "有改动时应当有待落盘内容");
+
+            flush_pending();
+            assert!(!has_pending(), "flush 之后不该再有待落盘内容");
+
+            let raw = std::fs::read(dir.join("history.json")).expect("history.json 应已写出");
+            let parsed: PersistFile = serde_json::from_slice(&raw).expect("写出的文件要能解析回来");
+            assert_eq!(parsed.version, PERSIST_VERSION);
+            assert!(
+                parsed.items.iter().any(|r| r.hash == "h-flush"),
+                "待落盘的记录必须在文件里"
+            );
+        }));
+
+        *DATA_DIR.lock() = None; // 立刻复位,别影响并行跑的其它用例
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(result.is_ok(), "flush_pending 不应 panic");
     }
 }

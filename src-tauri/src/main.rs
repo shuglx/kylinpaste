@@ -70,6 +70,8 @@ fn main() {
                 if event.window().label() == "main" {
                     api.prevent_close();
                     klog!("[窗口] 收到关闭请求(任务栏关闭),退出应用");
+                    // 落盘是 500ms 去抖的,退出前补一次:否则最后这段窗口内的改动会丢
+                    state::flush_pending();
                     event.window().app_handle().exit(0);
                 }
             }
@@ -173,8 +175,16 @@ show_main(&handle);
             cmd_get_hotkey_status,
             cmd_set_hotkey_recording,
         ])
-        .run(tauri::generate_context!())
-        .expect("KylinPaste 运行失败");
+        .build(tauri::generate_context!())
+        .expect("KylinPaste 构建失败")
+        .run(|_app, event| {
+            // 事件循环结束前的最后一道收尾:兜住不走上面两个入口的退出路径
+            // (macOS 从菜单/⌘Q 退出不会派发 CloseRequested)。flush_pending 是幂等的,
+            // 没有待落盘的改动时直接返回。
+            if let tauri::RunEvent::Exit = event {
+                state::flush_pending();
+            }
+        });
 }
 
 /// 隐藏主窗口(隐藏到托盘)
@@ -244,6 +254,8 @@ fn cmd_get_app_info(app: tauri::AppHandle) -> AppInfo {
 #[tauri::command]
 fn cmd_quit_app(app: tauri::AppHandle) {
     klog!("[启动] 用户从设置界面退出应用");
+    // 落盘是 500ms 去抖的,退出前补一次:否则最后这段窗口内的改动会丢
+    state::flush_pending();
     app.exit(0);
 }
 
