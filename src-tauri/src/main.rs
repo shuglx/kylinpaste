@@ -12,8 +12,8 @@ mod system;
 mod x11;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
 use once_cell::sync::Lazy;
+use parking_lot::Mutex;
 use tauri::{Manager, WindowEvent};
 
 
@@ -31,7 +31,11 @@ static WINDOW_VISIBLE: AtomicBool = AtomicBool::new(false);
 static WINDOW_FOCUSED: AtomicBool = AtomicBool::new(false);
 /// 主窗口最近一次的位置(物理坐标):
 /// UKUI 等桌面会在窗口重新映射时重新摆放(呼出位置每次都变的原因),
-/// 呼出时恢复,保证每次出现都在同一位置(mac 的 WM 自己记住位置,不走这里)
+/// 呼出时恢复,保证每次出现都在同一位置(mac 的 WM 自己记住位置,不走这里)。
+///
+/// 用 parking_lot 的锁:std 的会"中毒"(某个线程持锁时 panic 过,之后所有
+/// `.lock().unwrap()` 都会 panic),而这个锁在窗口拖动时会被反复加解锁,
+/// 一旦中毒就等于把应用打死——它保护的只是两个 i32,没有需要"中毒上报"的不变量。
 static WIN_POS: Lazy<Mutex<Option<(i32, i32)>>> = Lazy::new(|| Mutex::new(None));
 /// 置顶(图钉)状态镜像:粘贴链路据此决定"保持窗口显示"还是"隐藏",
 /// Linux 呼出窗口后还要据此补发置顶状态(重映射会丢 ABOVE)
@@ -78,7 +82,7 @@ fn main() {
             // 主窗口位置:拖动过程中持续更新(呼出时据此恢复)
             WindowEvent::Moved(position) => {
                 if event.window().label() == "main" {
-                    *WIN_POS.lock().unwrap() = Some((position.x, position.y));
+                    *WIN_POS.lock() = Some((position.x, position.y));
                 }
             }
             // 焦点真值只在这里更新(主线程)
@@ -432,7 +436,7 @@ pub fn show_main(app: &tauri::AppHandle) {
         // UKUI 会在窗口重新映射时重新摆放位置,呼出前恢复用户拖放过的位置;
         // mac 的窗口管理器自己会记住位置,不需要这一步
         #[cfg(target_os = "linux")]
-        if let Some((x, y)) = *WIN_POS.lock().unwrap() {
+        if let Some((x, y)) = *WIN_POS.lock() {
             let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
         }
         let _ = win.show();

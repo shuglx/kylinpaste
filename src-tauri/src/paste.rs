@@ -1,6 +1,6 @@
 //! 粘贴:写回剪贴板 + 模拟 Ctrl+V(参考 QuickClipboard paste/keyboard.rs)
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use clipboard_rs::{Clipboard, ClipboardContent};
@@ -20,21 +20,63 @@ use crate::state::{self, ClipboardRecord};
 /// 粘贴互斥:整条"写剪贴板→隐藏→归还焦点→注入"链路同一时刻只允许一条,
 /// 两条并发会互相踩(焦点/修饰键状态交错,注入变成裸 v 或落空)。
 /// 前端已过滤按键自动重复,这里是兜底(比如极快地连点两条记录)。
-static PASTE_BUSY: AtomicBool = AtomicBool::new(false);
+///
+/// 存的是"这次粘贴开始的时刻"而不是布尔:万一条链路 panic(或者以后有人在复位
+/// 之前插了一句提前返回),布尔会永久卡在"忙",之后所有粘贴都被静默忽略——
+/// 用户只看到"点了没反应"。带超时后即使漏了复位也能自愈。
+static PASTE_STARTED_MS: AtomicU64 = AtomicU64::new(0);
+/// 超过这么久还没结束,就认为上一次粘贴已经异常死掉,放新的进来。
+/// (正常链路最长约 2.4s:隐藏窗口 800ms + mac 等激活态让出 1200ms + 两次等待)
+const PASTE_BUSY_TIMEOUT_MS: u64 = 15_000;
+
+/// 粘贴通道的占用句柄:被释放时(包含提前 `return` 与 panic 展开)自动解锁,
+/// 不会因为漏写一句复位就把后续粘贴全堵死。
+struct PasteGuard {
+    started_ms: u64,
+}
+
+impl PasteGuard {
+    /// 尝试占用粘贴通道;返回 `None` 表示已有一条粘贴在进行
+    fn acquire() -> Option<Self> {
+        let now = state::now_ms();
+        loop {
+            let last = PASTE_STARTED_MS.load(Ordering::SeqCst);
+            if last != 0 && now.saturating_sub(last) < PASTE_BUSY_TIMEOUT_MS {
+                return None;
+            }
+            // 两个线程同时进来时,只有一个能把"空闲/已超时"改写成自己的时刻
+            if PASTE_STARTED_MS
+                .compare_exchange(last, now, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+            {
+                return Some(Self { started_ms: now });
+            }
+        }
+    }
+}
+
+impl Drop for PasteGuard {
+    fn drop(&mut self) {
+        // 只清自己那一次占用:万一自己早就超时、别的粘贴已经接手,不能把对方的占用清掉
+        let _ = PASTE_STARTED_MS.compare_exchange(
+            self.started_ms,
+            0,
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+        );
+    }
+}
 
 /// 特殊操作:纯文本粘贴。**必须 async**:粘贴链路里有最长 2s 的等待
 /// (隐藏窗口/等激活态让出),同步命令会占住主线程,NSApp hide 与排队到
 /// 主线程的操作都得不到处理,前台永远切不出去,⌘V 发进空档(粘贴无反应)。
 #[tauri::command(async)]
 pub fn cmd_paste_plain(app: AppHandle, id: u64) -> Result<(), String> {
-    if PASTE_BUSY
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
+    let Some(_guard) = PasteGuard::acquire() else {
         klog!("[粘贴] 已有粘贴在进行,忽略纯文本粘贴请求(id={id})");
         return Ok(());
-    }
-    let result = match state::get_by_id(id) {
+    };
+    match state::get_by_id(id) {
         Some(rec) => {
             let r = paste_record_plain(&app, &rec);
             if let Err(e) = &r {
@@ -43,23 +85,16 @@ pub fn cmd_paste_plain(app: AppHandle, id: u64) -> Result<(), String> {
             r
         }
         None => Err("记录不存在".into()),
-    };
-    PASTE_BUSY.store(false, Ordering::SeqCst);
-    result
+    }
 }
 
 #[tauri::command(async)]
 pub fn cmd_paste_item(app: AppHandle, id: u64) -> Result<(), String> {
-    if PASTE_BUSY
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
-    {
+    let Some(_guard) = PasteGuard::acquire() else {
         klog!("[粘贴] 已有粘贴在进行,忽略本次请求(id={id})");
         return Ok(());
-    }
-    let result = do_paste_item(&app, id);
-    PASTE_BUSY.store(false, Ordering::SeqCst);
-    result
+    };
+    do_paste_item(&app, id)
 }
 
 fn do_paste_item(app: &AppHandle, id: u64) -> Result<(), String> {
@@ -367,4 +402,38 @@ fn write_clipboard(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String>
             .set_text(rec.text.clone().unwrap_or_default())
             .map_err(|e| format!("写入文本失败: {e}")),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 粘贴互斥:占用期间拒绝新的,释放后能再进来;
+    /// 而且**即使上一次异常中断没复位,超时后也能自愈**(以前是布尔,会永久卡住)
+    #[test]
+    fn paste_guard_rejects_concurrent_then_recovers() {
+        PASTE_STARTED_MS.store(0, Ordering::SeqCst); // 与其它用例隔离
+
+        let guard = PasteGuard::acquire().expect("空闲时应当能占用");
+        assert!(PasteGuard::acquire().is_none(), "正在粘贴时应当拒绝");
+
+        drop(guard); // 句柄一释放就该解锁,不用手写复位
+        let again = PasteGuard::acquire().expect("释放后应当能再占用");
+        drop(again);
+        assert_eq!(
+            PASTE_STARTED_MS.load(Ordering::SeqCst),
+            0,
+            "句柄释放后占用标记应当被清掉"
+        );
+
+        // 超时自愈:模拟"上次粘贴死在半路",时间戳停在很久以前
+        PASTE_STARTED_MS.store(
+            crate::state::now_ms().saturating_sub(PASTE_BUSY_TIMEOUT_MS + 1),
+            Ordering::SeqCst,
+        );
+        let recovered = PasteGuard::acquire();
+        assert!(recovered.is_some(), "超过超时阈值后应当放行新的粘贴");
+        drop(recovered);
+        PASTE_STARTED_MS.store(0, Ordering::SeqCst);
+    }
 }

@@ -182,6 +182,20 @@ fn register_builtin(app: &AppHandle, accel: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 热键监听线程已经退出(例如 X11 连接断了)时由 x11 模块调用。
+///
+/// 必须把后端清掉、状态改成"不可用":否则设置界面还显示"X11 已注册,可用",
+/// 而实际上按热键毫无反应,用户只会以为"软件坏了"。
+/// 清掉 BACKEND 之后再调用 `apply()` 会重新走 `start_own` 拉起监听线程(自愈)。
+///
+/// 只有 Linux(X11 自建实现)会调用到,这里统一放行 dead_code
+#[allow(dead_code)]
+pub fn mark_dead(reason: &str) {
+    *BACKEND.lock() = None;
+    let accel = ACCEL.lock().clone();
+    set_status(&accel, "无", false, format!("热键监听已退出:{reason}"));
+}
+
 /// 设置界面录快捷键期间暂停/恢复全局热键。
 ///
 /// 不暂停的话:被动抓键会把该组合的按键事件从 webview 手里截走,

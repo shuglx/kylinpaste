@@ -11,9 +11,10 @@
 //! 2. enigo 注入按键前要用 XInput 枚举输入设备,并用 xkbcommon 按布局查键码;
 //!    这里直接用键盘映射把 V / Control_L 解析成键码再用 XTEST 注入,链路更短更可控。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use once_cell::sync::Lazy;
@@ -48,6 +49,51 @@ fn connect() -> XResult<(RustConnection, Window)> {
         RustConnection::connect(None).map_err(|e| format!("连接 X11 失败: {e}"))?;
     let root = conn.setup().roots[screen_num].root;
     Ok((conn, root))
+}
+
+/// 复用的 X11 连接(连同它对应的 root 窗口)。
+///
+/// 以前每个入口都自己 `connect()`:一次成功握手 + 一条新 socket。而"每次复制"
+/// (取来源应用)、"每次热键"、"每次粘贴"(归还焦点 / 注入按键)都要调好几次,
+/// 这些握手纯属浪费。`RustConnection` 本身就是按多线程使用设计的(内部自带锁,
+/// 且有明确的加锁顺序),所以共享一条即可,**不必再套一把自己的锁**把往返串行化——
+/// `activate_window` 最长要轮询 400ms,串起来会直接拖慢粘贴链路。
+///
+/// 连接出错(例如 X 会话重启)时丢掉缓存,下一次调用自动重连。
+/// 注意:热键监听线程有**自己**的一条连接,不能共用——被动抓键归属发起它的连接。
+static SHARED_CONN: Lazy<Mutex<Option<Arc<SharedConn>>>> = Lazy::new(|| Mutex::new(None));
+
+struct SharedConn {
+    conn: RustConnection,
+    root: Window,
+}
+
+/// 取一条可复用的连接。拿到的是 `Arc`,**调用期间不要持有 `SHARED_CONN` 的锁**
+/// (往返可能上百毫秒,持锁会挡住别的线程)。
+fn shared_conn() -> XResult<Arc<SharedConn>> {
+    let mut guard = SHARED_CONN.lock();
+    if guard.is_none() {
+        let (conn, root) = connect()?;
+        *guard = Some(Arc::new(SharedConn { conn, root }));
+    }
+    Ok(Arc::clone(guard.as_ref().expect("刚建过")))
+}
+
+/// 连接可能已经坏了:丢掉缓存,让下一次调用重新连
+fn forget_shared_conn() {
+    *SHARED_CONN.lock() = None;
+}
+
+/// 在共享连接上做一次操作;出错即认为连接可能已坏,丢弃缓存(下一次调用重连)
+fn with_shared<T>(f: impl FnOnce(&RustConnection, Window) -> XResult<T>) -> XResult<T> {
+    let shared = shared_conn()?;
+    match f(&shared.conn, shared.root) {
+        Ok(value) => Ok(value),
+        Err(e) => {
+            forget_shared_conn();
+            Err(e)
+        }
+    }
 }
 
 fn intern_atom(conn: &RustConnection, name: &[u8]) -> XResult<Atom> {
@@ -105,12 +151,12 @@ fn window_class(conn: &RustConnection, win: Window) -> Option<String> {
 /// 剪贴板变化事件通常紧跟复制动作发生,此时源应用还是活动窗口。
 /// 活动窗口是本应用自己时不记(避免把"我们自己写回剪贴板"当成来源)。
 pub fn active_app_name() -> Option<String> {
-    let (conn, root) = connect().ok()?;
-    let win = active_window(&conn, root)?;
-    if window_pid(&conn, win) == Some(std::process::id()) {
+    let shared = shared_conn().ok()?;
+    let win = active_window(&shared.conn, shared.root)?;
+    if window_pid(&shared.conn, win) == Some(std::process::id()) {
         return None;
     }
-    window_class(&conn, win)
+    window_class(&shared.conn, win)
 }
 
 /// 焦点是否已经离开本应用(说明窗口管理器正常地把焦点还给了别的窗口)。
@@ -118,11 +164,11 @@ pub fn active_app_name() -> Option<String> {
 /// 返回 false 有两种情况:焦点还在自己身上,或者根本没有活动窗口——
 /// 两者都意味着"需要手动归还焦点",否则模拟按键不知道往哪送。
 pub fn focus_left_app() -> bool {
-    let Ok((conn, root)) = connect() else {
+    let Ok(shared) = shared_conn() else {
         return false;
     };
-    match active_window(&conn, root) {
-        Some(win) => window_pid(&conn, win) != Some(std::process::id()),
+    match active_window(&shared.conn, shared.root) {
+        Some(win) => window_pid(&shared.conn, win) != Some(std::process::id()),
         None => false,
     }
 }
@@ -148,11 +194,16 @@ fn client_list(conn: &RustConnection, root: Window) -> Vec<Window> {
 /// 常有"防抢焦点"式的忽略,窗口明明在跑就是呼不到最前、置顶也不生效。
 /// 按 `_NET_WM_PID + WM_CLASS` 匹配;class 读不到时退回只比 pid。
 pub fn main_window_xid() -> Option<Window> {
-    let (conn, root) = connect().ok()?;
+    let shared = shared_conn().ok()?;
+    find_main_window(&shared.conn, shared.root)
+}
+
+/// 在"受管理窗口列表"里找本应用的主窗口(按 `_NET_WM_PID + WM_CLASS` 匹配)
+fn find_main_window(conn: &RustConnection, root: Window) -> Option<Window> {
     let me = std::process::id();
-    client_list(&conn, root).into_iter().find(|&win| {
-        window_pid(&conn, win) == Some(me)
-            && window_class(&conn, win)
+    client_list(conn, root).into_iter().find(|&win| {
+        window_pid(conn, win) == Some(me)
+            && window_class(conn, win)
                 .map(|class| class.to_ascii_lowercase().contains("kylinpaste"))
                 .unwrap_or(true)
     })
@@ -163,11 +214,11 @@ pub fn main_window_xid() -> Option<Window> {
 /// 直接问 X11,不依赖 GTK 的 Focused 事件 —— 镜像状态在部分桌面上收不到
 /// 焦点变化事件,会让热键切换走错分支(该前置时却什么也不做)。
 pub fn main_window_is_active() -> bool {
-    let Ok((conn, root)) = connect() else {
+    let Ok(shared) = shared_conn() else {
         return false;
     };
-    match active_window(&conn, root) {
-        Some(win) => window_pid(&conn, win) == Some(std::process::id()),
+    match active_window(&shared.conn, shared.root) {
+        Some(win) => window_pid(&shared.conn, win) == Some(std::process::id()),
         None => false,
     }
 }
@@ -177,18 +228,22 @@ pub fn main_window_is_active() -> bool {
 /// 与 GTK 的 set_always_on_top 并行使用:GTK 在部分 WM 上不生效,自己发一遍
 /// `_NET_WM_STATE_ABOVE` 最稳(与 `activate_window` 同样的 SUBSTRUCTURE_REDIRECT 约定)。
 pub fn set_above(enabled: bool) -> bool {
-    let Some(win) = main_window_xid() else {
+    let Ok(shared) = shared_conn() else {
         return false;
     };
-    let (conn, root) = match connect() {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let (Ok(state), Ok(above)) = (
-        intern_atom(&conn, b"_NET_WM_STATE"),
-        intern_atom(&conn, b"_NET_WM_STATE_ABOVE"),
-    ) else {
+    let (conn, root) = (&shared.conn, shared.root);
+    let Some(win) = find_main_window(conn, root) else {
         return false;
+    };
+    let (state, above) = match (
+        intern_atom(conn, b"_NET_WM_STATE"),
+        intern_atom(conn, b"_NET_WM_STATE_ABOVE"),
+    ) {
+        (Ok(state), Ok(above)) => (state, above),
+        _ => {
+            forget_shared_conn();
+            return false;
+        }
     };
     // data.l[0]: 1=添加属性 / 0=移除;l[1]=要改的属性
     let event = ClientMessageEvent::new(
@@ -208,6 +263,7 @@ pub fn set_above(enabled: bool) -> bool {
         .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
     if let Err(e) = sent {
         crate::klog!("[窗口] 发送 _NET_WM_STATE_ABOVE 失败: {e}");
+        forget_shared_conn();
         return false;
     }
     let _ = conn.flush();
@@ -221,13 +277,14 @@ pub fn set_above(enabled: bool) -> bool {
 /// 如果活动窗口已经是自己(例如剪贴板窗口本来就开着),不覆盖上一次的记录。
 /// 建议在**抢占焦点之前**调用(热键/托盘显示窗口前、进程启动时)。
 pub fn remember_target_window() {
-    let Ok((conn, root)) = connect() else {
+    let Ok(shared) = shared_conn() else {
         return;
     };
-    let Some(win) = active_window(&conn, root) else {
+    let (conn, root) = (&shared.conn, shared.root);
+    let Some(win) = active_window(conn, root) else {
         return;
     };
-    if window_pid(&conn, win) == Some(std::process::id()) {
+    if window_pid(conn, win) == Some(std::process::id()) {
         return;
     }
     let old = TARGET_WINDOW.swap(win, Ordering::SeqCst);
@@ -260,13 +317,14 @@ fn wait_active(conn: &RustConnection, root: Window, win: Window, timeout: Durati
 /// 先按 EWMH 发 _NET_ACTIVE_WINDOW(source=2,表示用户主动请求,可绕过防抢焦点限制),
 /// 窗口管理器不理会时再退回 XSetInputFocus。
 pub fn activate_window(win: Window) -> bool {
-    let (conn, root) = match connect() {
-        Ok(v) => v,
+    let shared = match shared_conn() {
+        Ok(shared) => shared,
         Err(e) => {
             eprintln!("[X11] {e}");
             return false;
         }
     };
+    let (conn, root) = (&shared.conn, shared.root);
     // 目标窗口可能已经被关掉(记录之后才关的),先确认它还在,避免白等一轮超时
     let alive = conn
         .get_window_attributes(win)
@@ -278,10 +336,11 @@ pub fn activate_window(win: Window) -> bool {
         return false;
     }
 
-    let atom = match intern_atom(&conn, b"_NET_ACTIVE_WINDOW") {
+    let atom = match intern_atom(conn, b"_NET_ACTIVE_WINDOW") {
         Ok(atom) => atom,
         Err(e) => {
             eprintln!("[X11] {e}");
+            forget_shared_conn();
             return false;
         }
     };
@@ -302,7 +361,7 @@ pub fn activate_window(win: Window) -> bool {
         eprintln!("[X11] 发送 _NET_ACTIVE_WINDOW 失败: {e}");
     }
 
-    if wait_active(&conn, root, win, Duration::from_millis(400)) {
+    if wait_active(conn, root, win, Duration::from_millis(400)) {
         return true;
     }
 
@@ -313,10 +372,11 @@ pub fn activate_window(win: Window) -> bool {
         .and_then(|cookie| cookie.check().map_err(|e| e.to_string()))
     {
         eprintln!("[X11] XSetInputFocus 失败: {e}");
+        forget_shared_conn();
         return false;
     }
     let _ = conn.flush();
-    wait_active(&conn, root, win, Duration::from_millis(200))
+    wait_active(conn, root, win, Duration::from_millis(200))
 }
 
 // ---------------------------------------------------------------- 全局热键
@@ -412,23 +472,30 @@ fn modifier_combos(bits: u16) -> Vec<u16> {
     combos
 }
 
-/// 交给监听线程的请求(监听线程独占 X 连接,抓/放键都必须由它做)
+/// 交给监听线程的请求(监听线程独占 X 连接,抓/放键都必须由它做)。
+///
+/// 结果由**请求自带**的通道回传:以前回传通道是一个全局单槽(`HOTKEY_REPLY`),
+/// 并发调用会把彼此的 `Sender` 覆盖掉;请求本身也是单槽(`Option<HotkeyReq>`),
+/// 后到的会把前一个还没被处理的请求直接挤掉——被挤掉的那个调用者只能白等 3 秒,
+/// 然后误报"监听线程没有响应"。现在请求排队、通道跟着请求走,两处都没了。
 enum HotkeyReq {
-    /// 改绑(seq 用于配对回复)
-    Set { seq: u64, accel: String },
+    /// 改绑(seq 仅用于日志)
+    Set {
+        seq: u64,
+        accel: String,
+        reply: Sender<XResult<()>>,
+    },
     /// 暂停:放开当前抓住的组合。
     ///
     /// 设置界面录快捷键时必须先放开——被动抓键(owner_events=false)会把该组合的
     /// 主键事件投递给抓键方(根窗口),webview 根本收不到,于是"录不进当前热键"。
-    Pause,
+    Pause { reply: Sender<XResult<()>> },
     /// 恢复:按当前加速键重新抓
-    Resume,
+    Resume { reply: Sender<XResult<()>> },
 }
 
-/// 待处理的请求:监听线程轮询到就执行
-static HOTKEY_REQ: Lazy<Mutex<Option<HotkeyReq>>> = Lazy::new(|| Mutex::new(None));
-/// 重新抓键的结果回传通道:`set_hotkey` 同步等结果,好把失败原因报给设置界面
-static HOTKEY_REPLY: Lazy<Mutex<Option<Sender<XResult<()>>>>> = Lazy::new(|| Mutex::new(None));
+/// 待处理的请求队列:监听线程轮询到就依次执行
+static HOTKEY_REQ: Lazy<Mutex<VecDeque<HotkeyReq>>> = Lazy::new(|| Mutex::new(VecDeque::new()));
 static HOTKEY_SEQ: AtomicU64 = AtomicU64::new(0);
 /// 当前生效的加速键(暂停后恢复时要用)
 static HOTKEY_ACCEL: Lazy<Mutex<String>> = Lazy::new(|| Mutex::new(String::new()));
@@ -582,27 +649,27 @@ fn grab_hotkey(
 pub fn set_hotkey(accel: &str) -> XResult<()> {
     *HOTKEY_ACCEL.lock() = accel.to_string();
     let seq = HOTKEY_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-    dispatch(HotkeyReq::Set {
-        seq,
-        accel: accel.to_string(),
-    })
+    let accel = accel.to_string();
+    dispatch(move |reply| HotkeyReq::Set { seq, accel, reply })
 }
 
 /// 暂停热键(放开已抓的组合):设置界面录快捷键前调用
 pub fn pause_hotkey() -> XResult<()> {
-    dispatch(HotkeyReq::Pause)
+    dispatch(|reply| HotkeyReq::Pause { reply })
 }
 
 /// 恢复热键(按当前加速键重新抓):录完/取消后调用
 pub fn resume_hotkey() -> XResult<()> {
-    dispatch(HotkeyReq::Resume)
+    dispatch(|reply| HotkeyReq::Resume { reply })
 }
 
-/// 把请求交给监听线程并同步等结果
-fn dispatch(req: HotkeyReq) -> XResult<()> {
+/// 把请求交给监听线程并同步等结果。
+///
+/// 请求是**排队**的:并发调用(设置界面连续改绑,或以后有命令改成 async)
+/// 不会互相挤掉,每个调用者都拿得到属于自己的那份结果。
+fn dispatch(make: impl FnOnce(Sender<XResult<()>>) -> HotkeyReq) -> XResult<()> {
     let (tx, rx) = channel();
-    *HOTKEY_REPLY.lock() = Some(tx);
-    *HOTKEY_REQ.lock() = Some(req);
+    HOTKEY_REQ.lock().push_back(make(tx));
     match rx.recv_timeout(Duration::from_secs(3)) {
         Ok(result) => result,
         Err(_) => Err("热键监听线程没有响应(可能已退出),本次操作未生效".to_string()),
@@ -646,23 +713,27 @@ where
         loop {
             // 设置界面的请求:改绑 / 暂停 / 恢复。
             // 抓键与放键都必须在本线程做:被动抓键归属发起它的那条 X 连接。
-            if let Some(req) = HOTKEY_REQ.lock().take() {
-                let result = match req {
-                    HotkeyReq::Set { seq, accel } => {
+            // 先把请求取出来再处理:锁不能跨越下面的 X11 调用(klog! 也可能很慢)
+            let pending = HOTKEY_REQ.lock().pop_front();
+            if let Some(req) = pending {
+                let (result, reply) = match req {
+                    HotkeyReq::Set { seq, accel, reply } => {
                         crate::klog!("[热键] 收到改绑请求 #{seq}: {accel}");
-                        match grab_hotkey(&conn, root, &keymap, &accel, current.as_ref()) {
-                            Ok(grab) => {
-                                *HOTKEY_ACCEL.lock() = accel;
-                                current = Some(grab);
-                                Ok(())
-                            }
-                            Err(e) => {
-                                crate::klog!("[热键] 改绑失败: {e}");
-                                Err(e)
-                            }
-                        }
+                        let result =
+                            match grab_hotkey(&conn, root, &keymap, &accel, current.as_ref()) {
+                                Ok(grab) => {
+                                    *HOTKEY_ACCEL.lock() = accel;
+                                    current = Some(grab);
+                                    Ok(())
+                                }
+                                Err(e) => {
+                                    crate::klog!("[热键] 改绑失败: {e}");
+                                    Err(e)
+                                }
+                            };
+                        (result, reply)
                     }
-                    HotkeyReq::Pause => {
+                    HotkeyReq::Pause { reply } => {
                         if let Some(grab) = current.take() {
                             release(&conn, root, &grab);
                             crate::klog!(
@@ -670,11 +741,11 @@ where
                                 grab.keycode
                             );
                         }
-                        Ok(())
+                        (Ok(()), reply)
                     }
-                    HotkeyReq::Resume => {
+                    HotkeyReq::Resume { reply } => {
                         let accel = HOTKEY_ACCEL.lock().clone();
-                        if accel.is_empty() {
+                        let result = if accel.is_empty() {
                             Ok(())
                         } else {
                             match grab_hotkey(&conn, root, &keymap, &accel, None) {
@@ -687,12 +758,11 @@ where
                                     Err(e)
                                 }
                             }
-                        }
+                        };
+                        (result, reply)
                     }
                 };
-                if let Some(tx) = HOTKEY_REPLY.lock().take() {
-                    let _ = tx.send(result);
-                }
+                let _ = reply.send(result);
             }
 
             let event = match conn.poll_for_event() {
@@ -704,6 +774,10 @@ where
                 }
                 Err(e) => {
                     crate::klog!("[热键] X11 事件读取失败,热键监听退出: {e}");
+                    // 线程一退出热键就真的失效了:必须把状态改成"不可用",否则设置界面
+                    // 还显示"X11 已注册",用户对着失效的快捷键干瞪眼。清掉后端之后,
+                    // 用户在设置里重新应用一次热键会重新拉起监听线程(自愈)。
+                    crate::hotkey::mark_dead(&format!("X11 事件读取失败: {e}"));
                     break;
                 }
             };
@@ -740,32 +814,102 @@ where
 
 /// 用 XTEST 注入 Ctrl+V。事件送给当前拥有输入焦点的窗口。
 pub fn send_ctrl_v() -> XResult<()> {
-    let (conn, root) = connect()?;
-    let keymap = KeyMap::load(&conn)?;
-    let v = keymap
-        .keycode_of(b'v' as u32)
-        .ok_or_else(|| "键盘映射里找不到按键 V".to_string())?;
-    let ctrl = keymap
-        .keycode_of(KEYSYM_CONTROL_L)
-        .ok_or_else(|| "键盘映射里找不到 Control_L".to_string())?;
+    with_shared(|conn, root| {
+        let keymap = KeyMap::load(conn)?;
+        let v = keymap
+            .keycode_of(b'v' as u32)
+            .ok_or_else(|| "键盘映射里找不到按键 V".to_string())?;
+        let ctrl = keymap
+            .keycode_of(KEYSYM_CONTROL_L)
+            .ok_or_else(|| "键盘映射里找不到 Control_L".to_string())?;
 
-    let fake = |keycode: u8, press: bool| -> XResult<()> {
-        let type_ = if press {
-            KEY_PRESS_EVENT
-        } else {
-            KEY_RELEASE_EVENT
+        let fake = |keycode: u8, press: bool| -> XResult<()> {
+            let type_ = if press {
+                KEY_PRESS_EVENT
+            } else {
+                KEY_RELEASE_EVENT
+            };
+            xtest::fake_input(conn, type_, keycode, CURRENT_TIME, root, 0, 0, 0)
+                .map_err(|e| format!("注入按键失败: {e}"))?
+                .check()
+                .map_err(|e| format!("注入按键失败: {e}"))
         };
-        xtest::fake_input(&conn, type_, keycode, CURRENT_TIME, root, 0, 0, 0)
-            .map_err(|e| format!("注入按键失败: {e}"))?
-            .check()
-            .map_err(|e| format!("注入按键失败: {e}"))
-    };
 
-    fake(ctrl, true)?;
-    fake(v, true)?;
-    std::thread::sleep(Duration::from_millis(12));
-    fake(v, false)?;
-    fake(ctrl, false)?;
-    conn.flush().map_err(|e| format!("刷新 X11 请求失败: {e}"))?;
-    Ok(())
+        fake(ctrl, true)?;
+        fake(v, true)?;
+        std::thread::sleep(Duration::from_millis(12));
+        fake(v, false)?;
+        fake(ctrl, false)?;
+        conn.flush().map_err(|e| format!("刷新 X11 请求失败: {e}"))?;
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 请求要**排队**、而且各带自己的回传通道。
+    ///
+    /// 以前请求是单槽(`Option`)、回复也是单槽:`set_hotkey` 与暂停/恢复并发时
+    /// 会互相覆盖——被挤掉的那个调用者既收不到结果,又要白等 3 秒,最后误报
+    /// "热键监听线程没有响应"。这个用例把那条链路钉住。
+    #[test]
+    fn queued_requests_keep_their_own_reply_channel() {
+        HOTKEY_REQ.lock().clear(); // 清掉进程内可能残留的请求
+
+        let (tx1, rx1) = channel();
+        let (tx2, rx2) = channel();
+        HOTKEY_REQ.lock().push_back(HotkeyReq::Pause { reply: tx1 });
+        HOTKEY_REQ.lock().push_back(HotkeyReq::Resume { reply: tx2 });
+
+        // 模拟监听线程依次取:两个请求都得在,不能互相挤掉,且按入队顺序
+        let first = HOTKEY_REQ.lock().pop_front().expect("第一个请求还在");
+        let second = HOTKEY_REQ.lock().pop_front().expect("第二个请求也没被挤掉");
+        assert!(HOTKEY_REQ.lock().is_empty(), "队列应当已取空");
+
+        let (reply1, reply2) = match (first, second) {
+            (HotkeyReq::Pause { reply }, HotkeyReq::Resume { reply: second }) => (reply, second),
+            _ => panic!("出队顺序应当与入队顺序一致"),
+        };
+
+        // 各自回复:两个调用者拿到的是**自己的**那份结果
+        let _ = reply1.send(Err("第一个失败".to_string()));
+        let _ = reply2.send(Ok(()));
+        assert_eq!(
+            rx1.recv_timeout(Duration::from_secs(1)),
+            Ok(Err("第一个失败".to_string()))
+        );
+        assert_eq!(rx2.recv_timeout(Duration::from_secs(1)), Ok(Ok(())));
+    }
+
+    /// `dispatch` 必须把**每一个**请求都排进队列。
+    ///
+    /// 这是老实现的直接病灶:请求是单槽 `Option`,两个并发调用只有后到的能留下,
+    /// 前一个既没人处理、也没人回复。这里并发调两次,断言队列里能看到两条
+    /// (旧实现下这个断言会失败)。
+    #[test]
+    fn dispatch_queues_every_request() {
+        HOTKEY_REQ.lock().clear();
+
+        // 没有监听线程,所以两个调用最终都会超时返回 Err;这里只关心"有没有都进队列"
+        let first = std::thread::spawn(|| dispatch(|reply| HotkeyReq::Pause { reply }));
+        let second = std::thread::spawn(|| dispatch(|reply| HotkeyReq::Resume { reply }));
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while HOTKEY_REQ.lock().len() < 2 {
+            assert!(
+                Instant::now() < deadline,
+                "两个请求没有都进队列(旧实现里后到的会把先到的挤掉)"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        // 清空队列会丢掉还没回复的 Sender,两个调用者随即拿到错误、立刻返回,
+        // 不用真的等满 3 秒超时
+        HOTKEY_REQ.lock().clear();
+        assert!(first.join().expect("线程不该 panic").is_err());
+        assert!(second.join().expect("线程不该 panic").is_err());
+        assert!(HOTKEY_REQ.lock().is_empty());
+    }
 }
