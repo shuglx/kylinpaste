@@ -1064,7 +1064,8 @@ export default function App() {
                 {modDown && quickPaste && idx < 9 && <span className="num">{idx + 1}</span>}
               </Thumb>
               <div className="main">
-                <div className="title">
+                {/* 标题/辅助信息可能被省略号截断,悬停展示完整内容 */}
+                <div className="title" title={aux ? `${title}「${aux}」` : title}>
                   <span className="title-text">{title}</span>
                   {aux && <span className="title-aux">「{aux}」</span>}
                 </div>
