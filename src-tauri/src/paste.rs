@@ -301,11 +301,17 @@ fn restore_focus() {
         }
         match crate::x11::target_window() {
             Some(win) => {
+                // UKUI 在我们隐藏后会自动把焦点还给目标窗口,此时 EWMH 激活是空操作,
+                // WM 不重走激活协议 → Qt/CEF 类应用(cmclient 实测)不恢复内部焦点。
+                // 先把焦点拨到根窗口制造"真切换",让 WM 走完整激活流程
+                if crate::x11::target_window_is_active() {
+                    let unset = crate::x11::unsettle_focus();
+                    klog!("[粘贴] 目标已是活动窗口,拨焦点到根窗口制造真切换: {unset}");
+                }
                 let ok = crate::x11::activate_window(win);
                 klog!("[粘贴] 归还焦点到 0x{win:x},结果={ok}");
-                // EWMH 激活在"目标已是活动窗口"时会被 WM 当空操作、不发 WM_TAKE_FOCUS,
-                // Qt/CEF 类应用(企业邮箱 cmclient 实测)收不到它就不恢复内部控件焦点,
-                // 表现为"窗口激活了、光标不闪、Ctrl+V 没人处理"——补发把协议走完整
+                // 无论激活是"真切换"还是空操作,都补发一次带真实时间戳的
+                // WM_TAKE_FOCUS,把激活协议走完整(幂等,正常应用无感)
                 let tf = crate::x11::send_wm_take_focus(win);
                 klog!("[粘贴] 补发 WM_TAKE_FOCUS: {tf}");
             }

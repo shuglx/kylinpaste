@@ -314,16 +314,29 @@ pub fn target_window() -> Option<Window> {
     (win != 0).then_some(win)
 }
 
-/// 窗口的「类名: 标题」标识,日志里用它定位窗口(拿不到的部分用 ? 兜底)
+/// 窗口的「类名: 标题」标识,日志里用它定位窗口(拿不到的部分用 ? 兜底)。
+/// 标题优先读 _NET_WM_NAME(UTF8_STRING):Qt/Electron 应用的中文标题都在这里,
+/// 老式 WM_NAME(STRING/COMPOUND_TEXT) 里读出来是空或乱码
 fn window_label(conn: &RustConnection, win: Window) -> String {
     let class = window_class(conn, win).unwrap_or_else(|| "?".into());
-    let title = conn
-        .get_property(false, win, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 128)
-        .ok()
-        .and_then(|cookie| cookie.reply().ok())
-        .map(|reply| String::from_utf8_lossy(&reply.value).trim().to_string())
-        .filter(|title| !title.is_empty())
-        .unwrap_or_else(|| "?".into());
+    let title = (|| {
+        let atom = intern_atom(conn, b"_NET_WM_NAME").ok()?;
+        let title = conn
+            .get_property(false, win, atom, AtomEnum::STRING, 0, 256)
+            .ok()?
+            .reply()
+            .ok()?;
+        let title = String::from_utf8_lossy(&title.value).trim().to_string();
+        (!title.is_empty()).then_some(title)
+    })()
+    .or_else(|| {
+        conn.get_property(false, win, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 128)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| String::from_utf8_lossy(&reply.value).trim().to_string())
+            .filter(|title| !title.is_empty())
+    })
+    .unwrap_or_else(|| "?".into());
     format!("{class}: {title}")
 }
 
@@ -410,14 +423,31 @@ pub fn send_wm_take_focus(win: Window) -> bool {
         .ok()
         .and_then(|cookie| cookie.reply().ok())
         .map(|reply| reply.value32().map(|it| it.collect::<Vec<u32>>()));
-    if let Some(Some(atoms)) = declared {
-        if !atoms.iter().any(|atom| *atom == take_focus) {
-            crate::klog!("[X11] 目标窗口 0x{win:x} 未声明 WM_TAKE_FOCUS,跳过补发");
-            return true;
+    let declared_take_focus = match declared {
+        Some(Some(atoms)) => {
+            let hit = atoms.iter().any(|atom| *atom == take_focus);
+            if !hit {
+                crate::klog!("[X11] 目标窗口 0x{win:x} 未声明 WM_TAKE_FOCUS,跳过补发");
+                return true;
+            }
+            true
         }
-    }
+        // 属性都查不到:窗口可能不按 ICCCM 出牌,照发并记录
+        _ => {
+            crate::klog!("[X11] 目标窗口 0x{win:x} WM_PROTOCOLS 查询失败,盲发 WM_TAKE_FOCUS");
+            false
+        }
+    };
 
-    let time = server_time(conn, root).unwrap_or(CURRENT_TIME);
+    let (time, time_from_server) = match server_time(conn, root) {
+        Some(t) => (t, true),
+        // 时间戳拿不到时回落 CurrentTime(0):Qt 等工具包可能把它当"过期激活"
+        // 忽略,这是"WM_TAKE_FOCUS 发了但应用不恢复焦点"的候选原因之一,必须留痕
+        None => (CURRENT_TIME, false),
+    };
+    crate::klog!(
+        "[X11] WM_TAKE_FOCUS: 声明过协议={declared_take_focus} 时间戳={time}(来自服务器={time_from_server})"
+    );
     // ICCCM 约定:WM_TAKE_FOCUS 直接发给目标窗口本身(data.l[0]=时间戳,l[1]=协议原子)
     let event = ClientMessageEvent::new(32, win, protocols, [time, take_focus, 0, 0, 0]);
     let sent = conn
@@ -427,6 +457,43 @@ pub fn send_wm_take_focus(win: Window) -> bool {
     let ok = sent.is_ok();
     if let Err(e) = sent {
         crate::klog!("[X11] 发送 WM_TAKE_FOCUS 失败: {e}");
+        forget_shared_conn();
+    }
+    let _ = conn.flush();
+    ok
+}
+
+/// 目标窗口当前是否已经是活动窗口
+pub fn target_window_is_active() -> bool {
+    let Ok(shared) = shared_conn() else {
+        return false;
+    };
+    match target_window() {
+        Some(target) => active_window(&shared.conn, shared.root) == Some(target),
+        None => false,
+    }
+}
+
+/// 把 X 输入焦点拨到根窗口,让目标窗口的下一次激活成为"真切换"。
+///
+/// 为什么需要它:剪贴板窗口隐藏后,UKUI 会自动把焦点还给上一个窗口(即目标
+/// 窗口),此时再发 _NET_ACTIVE_WINDOW 激活它会被当"空操作"——WM 不重走激活
+/// 协议(不重发 FocusIn/WM_TAKE_FOCUS),Qt/CEF 类应用就不会恢复内部控件焦点
+/// (企业邮箱 cmclient 写信窗口实测)。先把焦点拨到根窗口制造一次真切换,
+/// WM 才会走完整激活流程。注意:焦点在根窗口期间模拟按键会打到根窗口,
+/// 所以调用后必须立刻重新激活目标窗口,再注入按键。
+pub fn unsettle_focus() -> bool {
+    let Ok(shared) = shared_conn() else {
+        return false;
+    };
+    let (conn, root) = (&shared.conn, shared.root);
+    let sent = conn
+        .set_input_focus(InputFocus::POINTER_ROOT, root, CURRENT_TIME)
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
+    let ok = sent.is_ok();
+    if let Err(e) = sent {
+        crate::klog!("[X11] 拨焦点到根窗口失败: {e}");
         forget_shared_conn();
     }
     let _ = conn.flush();
