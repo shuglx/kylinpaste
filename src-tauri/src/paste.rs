@@ -222,9 +222,18 @@ fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
         crate::window_visible(),
     );
 
+    // macOS:应用重新拿到激活态后,key window 是应用自己挑的——多窗口应用
+    // (如邮件客户端的写信窗口)常常回到主窗口,而不是用户原来在打字的窗口。
+    // 把呼出前用 AX 记下的焦点窗口设回去,⌘V 才会落到正确的窗口。
+    #[cfg(target_os = "macos")]
+    crate::appinfo::restore_focused_window();
+
     // 4. 注入粘贴快捷键(macOS 是 ⌘V,其余平台 Ctrl+V)
     simulate_paste()?;
     klog!("[粘贴] 粘贴快捷键已发送");
+    // 注入后焦点快照:确认按键真的送进了目标窗口(排查"没粘贴进来"类问题的关键证据)
+    #[cfg(target_os = "linux")]
+    klog!("[粘贴] 注入后: {}", crate::x11::focus_snapshot());
 
     // 5. 置顶模式:给目标应用留一点处理按键的时间,然后把窗口恢复显示。
     //    show_main 在 Linux 上会顺带补发 ABOVE,修复 UKUI 重映射丢置顶的问题。
@@ -294,6 +303,11 @@ fn restore_focus() {
             Some(win) => {
                 let ok = crate::x11::activate_window(win);
                 klog!("[粘贴] 归还焦点到 0x{win:x},结果={ok}");
+                // EWMH 激活在"目标已是活动窗口"时会被 WM 当空操作、不发 WM_TAKE_FOCUS,
+                // Qt/CEF 类应用(企业邮箱 cmclient 实测)收不到它就不恢复内部控件焦点,
+                // 表现为"窗口激活了、光标不闪、Ctrl+V 没人处理"——补发把协议走完整
+                let tf = crate::x11::send_wm_take_focus(win);
+                klog!("[粘贴] 补发 WM_TAKE_FOCUS: {tf}");
             }
             None => klog!("[粘贴] 没有记录过目标窗口,依赖窗口管理器归还焦点"),
         }

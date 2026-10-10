@@ -41,6 +41,9 @@ const KEYSYM_CONTROL_L: u32 = 0xffe3;
 
 /// 唤起剪贴板之前桌面上处于活动状态的那个窗口,粘贴时把焦点还给它
 static TARGET_WINDOW: AtomicU32 = AtomicU32::new(0);
+/// 本应用主窗口的 xid 缓存:窗口隐藏后会退出 _NET_CLIENT_LIST(查不到),
+/// 而 server_time 要在自己窗口上写属性才能取到服务器时间戳,可见时先缓存一份
+static MAIN_WINDOW_XID: AtomicU32 = AtomicU32::new(0);
 
 // ---------------------------------------------------------------- 连接与查询
 
@@ -195,7 +198,11 @@ fn client_list(conn: &RustConnection, root: Window) -> Vec<Window> {
 /// 按 `_NET_WM_PID + WM_CLASS` 匹配;class 读不到时退回只比 pid。
 pub fn main_window_xid() -> Option<Window> {
     let shared = shared_conn().ok()?;
-    find_main_window(&shared.conn, shared.root)
+    let found = find_main_window(&shared.conn, shared.root);
+    if let Some(win) = found {
+        MAIN_WINDOW_XID.store(win, Ordering::SeqCst);
+    }
+    found
 }
 
 /// 在"受管理窗口列表"里找本应用的主窗口(按 `_NET_WM_PID + WM_CLASS` 匹配)
@@ -289,7 +296,12 @@ pub fn remember_target_window() {
     }
     let old = TARGET_WINDOW.swap(win, Ordering::SeqCst);
     if old != win {
-        eprintln!("[X11] 记住目标窗口: 0x{win:x}(原 0x{old:x})");
+        // 带上类名/标题:排查"焦点还错了窗口"类问题(如多窗口邮件客户端)全靠它;
+        // 之前用 eprintln! 只进 stderr,kylinpaste.log 里看不到
+        crate::klog!(
+            "[X11] 记住目标窗口: 0x{win:x}({})(原 0x{old:x})",
+            window_label(&shared.conn, win)
+        );
     }
 }
 
@@ -297,6 +309,152 @@ pub fn remember_target_window() {
 pub fn target_window() -> Option<Window> {
     let win = TARGET_WINDOW.load(Ordering::SeqCst);
     (win != 0).then_some(win)
+}
+
+/// 窗口的「类名: 标题」标识,日志里用它定位窗口(拿不到的部分用 ? 兜底)
+fn window_label(conn: &RustConnection, win: Window) -> String {
+    let class = window_class(conn, win).unwrap_or_else(|| "?".into());
+    let title = conn
+        .get_property(false, win, AtomEnum::WM_NAME, AtomEnum::STRING, 0, 128)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .map(|reply| String::from_utf8_lossy(&reply.value).trim().to_string())
+        .filter(|title| !title.is_empty())
+        .unwrap_or_else(|| "?".into());
+    format!("{class}: {title}")
+}
+
+/// 拿 X 服务器当前时间戳(ICCCM 的标准做法):
+/// 对自己窗口写一个一次性属性,PropertyNotify 事件携带的时间就是服务器时间。
+///
+/// 发 WM_TAKE_FOCUS 要带可信的"用户输入时间戳":我们手里只有热键事件的时间,
+/// 鼠标点托盘/条目唤起的粘贴拿不到;而时间戳太旧会被应用当"过期的激活"忽略。
+fn server_time(conn: &RustConnection, root: Window) -> Option<u32> {
+    // 自己的窗口此时多半已隐藏(退出 _NET_CLIENT_LIST 查不到),用缓存兜底
+    let win = find_main_window(conn, root).or_else(|| {
+        let cached = MAIN_WINDOW_XID.load(Ordering::SeqCst);
+        (cached != 0).then_some(cached)
+    })?;
+    let atom = intern_atom(conn, b"KYLPASTE_PASTE_TIME").ok()?;
+
+    // PropertyNotify 只发给选中了 PropertyChange 掩码的客户端:先临时加上,
+    // 取完立刻还原(掩码是 GTK 设的,别长期替它做主)
+    let original_mask = conn
+        .get_window_attributes(win)
+        .ok()?
+        .reply()
+        .ok()?
+        .your_event_mask;
+    conn.change_window_attributes(
+        win,
+        &ChangeWindowAttributesAux::new().event_mask(original_mask | EventMask::PROPERTY_CHANGE),
+    )
+    .ok()?
+    .check()
+    .ok()?;
+    conn.change_property32(win, atom, AtomEnum::CARDINAL, [0u32])
+        .ok()?
+        .check()
+        .ok()?;
+    let _ = conn.flush();
+
+    let deadline = Instant::now() + Duration::from_millis(200);
+    let mut got = None;
+    while got.is_none() && Instant::now() < deadline {
+        while let Ok(Some(event)) = conn.poll_for_event() {
+            if let Event::PropertyNotify(pn) = event {
+                if pn.window == win && pn.atom == atom {
+                    got = Some(pn.time);
+                }
+            }
+        }
+        if got.is_none() {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+    let _ =
+        conn.change_window_attributes(win, &ChangeWindowAttributesAux::new().event_mask(original_mask));
+    let _ = conn.flush();
+    got
+}
+
+/// 给目标窗口补发 WM_TAKE_FOCUS 客户端消息(ICCCM),把激活协议走完整。
+///
+/// 为什么需要它:EWMH 激活(_NET_ACTIVE_WINDOW)只是"让窗口管理器把窗口标成活动"。
+/// 实测 UKUI 上,当目标窗口**已经**是活动窗口时(我们隐藏窗口后 WM 自动把焦点
+/// 还给了它),激活请求会被当空操作——活动窗口标记没变,WM 随激活发给应用的
+/// WM_TAKE_FOCUS 也就不会有。Qt/CEF 类应用(如企业邮箱 cmclient)靠这条消息
+/// 恢复内部控件焦点,收不到的表现就是"窗口是活动的、光标不闪,Ctrl+V 没人处理"。
+/// 直接补发等价于 WM 在 alt-tab 激活时做的最后一步;对行为正常的应用幂等无害。
+pub fn send_wm_take_focus(win: Window) -> bool {
+    let Ok(shared) = shared_conn() else {
+        return false;
+    };
+    let (conn, root) = (&shared.conn, shared.root);
+    let (Ok(protocols), Ok(take_focus)) = (
+        intern_atom(conn, b"WM_PROTOCOLS"),
+        intern_atom(conn, b"WM_TAKE_FOCUS"),
+    ) else {
+        forget_shared_conn();
+        return false;
+    };
+
+    // 目标窗口在 WM_PROTOCOLS 里声明过才会处理这条消息(没声明的老窗口跳过);
+    // 协议属性查询不到时不拦,照发(发不进去也就是失败,不比现状差)
+    if let Some(atoms) = conn
+        .get_property(false, win, protocols, AtomEnum::ATOM, 0, 64)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .and_then(|reply| reply.value32())
+    {
+        if !atoms.any(|atom| atom == take_focus) {
+            crate::klog!("[X11] 目标窗口 0x{win:x} 未声明 WM_TAKE_FOCUS,跳过补发");
+            return true;
+        }
+    }
+
+    let time = server_time(conn, root).unwrap_or(CURRENT_TIME);
+    // ICCCM 约定:WM_TAKE_FOCUS 直接发给目标窗口本身(data.l[0]=时间戳,l[1]=协议原子)
+    let event = ClientMessageEvent::new(32, win, protocols, [time, take_focus, 0, 0, 0]);
+    let sent = conn
+        .send_event(false, win, EventMask::NO_EVENT, event)
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
+    let ok = sent.is_ok();
+    if let Err(e) = sent {
+        crate::klog!("[X11] 发送 WM_TAKE_FOCUS 失败: {e}");
+        forget_shared_conn();
+    }
+    let _ = conn.flush();
+    ok
+}
+
+/// 粘贴诊断快照:_NET_ACTIVE_WINDOW 与 X 输入焦点各落在哪个窗口。
+///
+/// XTEST 注入的按键送给"输入焦点"窗口,它和 _NET_ACTIVE_WINDOW 不是一回事;
+/// 两者不一致(或焦点悬在根窗口)时注入就会打空。排查"没粘贴进来"类问题主要看这两个值。
+pub fn focus_snapshot() -> String {
+    let Some(shared) = shared_conn() else {
+        return "X11 连接不可用".into();
+    };
+    let (conn, _) = (&shared.conn, shared.root);
+    let describe = |win: Window| -> String {
+        if win <= 1 {
+            format!("{win:x}(根/无)")
+        } else {
+            format!("{win:x}({})", window_label(conn, win))
+        }
+    };
+    let active = active_window(conn, shared.root)
+        .map(describe)
+        .unwrap_or_else(|| "无".into());
+    let focus = conn
+        .get_input_focus()
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .map(|reply| describe(reply.focus))
+        .unwrap_or_else(|| "查询失败".into());
+    format!("活动窗口={active} 输入焦点={focus}")
 }
 
 fn wait_active(conn: &RustConnection, root: Window, win: Window, timeout: Duration) -> bool {
