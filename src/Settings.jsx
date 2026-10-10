@@ -544,7 +544,16 @@ export default function Settings({
               <div className="card about-card">
                 <img className="about-logo" src="/icon.png" alt="" />
                 <div className="about-text">
-                  <div className="about-name">{appInfo?.name || t.appName}</div>
+                  <div className="about-name-row">
+                    <div className="about-name">{appInfo?.name || t.appName}</div>
+                    <button
+                      className="icon-btn about-github-btn"
+                      title="GitHub"
+                      onClick={() => openUrl(GITHUB_URL).catch((e) => fail(e))}
+                    >
+                      <IconExternalLink />
+                    </button>
+                  </div>
                   <div className="about-version">
                     {t.version} {appInfo?.version || '—'}
                   </div>
@@ -553,15 +562,6 @@ export default function Settings({
 
               <div className="group-title">{t.sectionLinks}</div>
               <div className="card">
-                <Row
-                  label={t.githubRepo}
-                  onClick={() => openUrl(GITHUB_URL).catch((e) => fail(e))}
-                >
-                  <span className="link-value">
-                    github.com/shuglx/kylinpaste
-                    <IconExternalLink />
-                  </span>
-                </Row>
                 <Row label={t.logFile} onClick={openLogFile}>
                   <span
                     className="link-value log-path"

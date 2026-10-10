@@ -93,7 +93,7 @@ const zh = {
 
   sectionI18n: '国际化',
   sectionAbout: '产品',
-  sectionLinks: '链接',
+  sectionLinks: '支持',
   quitApp: '退出应用',
   quitOk: '退出',
   quitTitle: '退出 KylinPaste？',
@@ -128,7 +128,6 @@ const zh = {
   langZh: '中文',
   langEn: 'English',
   version: '版本',
-  githubRepo: 'GitHub 仓库',
 
   // 使用方法(顶栏"?"按钮):每个章节一张表格,左列是快捷键/图标,右列是说明
   help: '使用方法',
@@ -254,7 +253,7 @@ const en = {
 
   sectionI18n: 'Language',
   sectionAbout: 'Product',
-  sectionLinks: 'Links',
+  sectionLinks: 'Support',
   quitApp: 'Quit App',
   quitOk: 'Quit',
   quitTitle: 'Quit KylinPaste?',
@@ -289,7 +288,6 @@ const en = {
   langZh: '中文',
   langEn: 'English',
   version: 'Version',
-  githubRepo: 'GitHub repository',
 
   help: 'How to use',
   helpTitle: 'How to use',
