@@ -321,8 +321,11 @@ fn window_label(conn: &RustConnection, win: Window) -> String {
     let class = window_class(conn, win).unwrap_or_else(|| "?".into());
     let title = (|| {
         let atom = intern_atom(conn, b"_NET_WM_NAME").ok()?;
+        // _NET_WM_NAME 的属性类型是 UTF8_STRING,X11 按"请求类型=属性类型"匹配,
+        // 用 STRING 去查会因类型不匹配拿到空(之前标题一直显示 ? 就是这个原因)
+        let utf8 = intern_atom(conn, b"UTF8_STRING").ok()?;
         let title = conn
-            .get_property(false, win, atom, AtomEnum::STRING, 0, 256)
+            .get_property(false, win, atom, utf8, 0, 256)
             .ok()?
             .reply()
             .ok()?;
@@ -461,6 +464,68 @@ pub fn send_wm_take_focus(win: Window) -> bool {
     }
     let _ = conn.flush();
     ok
+}
+
+/// 找桌面窗口(_NET_WM_WINDOW_TYPE_DESKTOP),作为"真切换"的中间落点。
+/// 激活桌面不会打扰其他应用窗口,只让 WM 的活动窗口状态真正切走
+pub fn desktop_window() -> Option<Window> {
+    let shared = shared_conn().ok()?;
+    let (conn, root) = (&shared.conn, shared.root);
+    let type_atom = intern_atom(conn, b"_NET_WM_WINDOW_TYPE").ok()?;
+    let desktop_atom = intern_atom(conn, b"_NET_WM_WINDOW_TYPE_DESKTOP").ok()?;
+    for win in client_list(conn, root) {
+        let declared = conn
+            .get_property(false, win, type_atom, AtomEnum::ATOM, 0, 64)
+            .ok()
+            .and_then(|cookie| cookie.reply().ok())
+            .map(|reply| reply.value32().map(|it| it.collect::<Vec<u32>>()));
+        if let Some(Some(atoms)) = declared {
+            if atoms.iter().any(|atom| *atom == desktop_atom) {
+                return Some(win);
+            }
+        }
+    }
+    None
+}
+
+/// 激活窗口但不等待激活完成("即发即走")。
+///
+/// 用途:真切换的"中间落点"(如桌面)。在那里停留多久,桌面就闪现多久,
+/// 所以只发 EWMH 消息不等确认,由调用方控制切换间隔。
+pub fn activate_window_fast(win: Window) -> bool {
+    let Ok(shared) = shared_conn() else {
+        return false;
+    };
+    let (conn, root) = (&shared.conn, shared.root);
+    let alive = conn
+        .get_window_attributes(win)
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.reply().map_err(|e| e.to_string()))
+        .is_ok();
+    if !alive {
+        return false;
+    }
+    let Ok(atom) = intern_atom(conn, b"_NET_ACTIVE_WINDOW") else {
+        forget_shared_conn();
+        return false;
+    };
+    let event = ClientMessageEvent::new(32, win, atom, [CURRENT_TIME, 2u32, 0, 0, 0]);
+    let sent = conn
+        .send_event(
+            false,
+            root,
+            EventMask::SUBSTRUCTURE_REDIRECT | EventMask::SUBSTRUCTURE_NOTIFY,
+            event,
+        )
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
+    if let Err(e) = sent {
+        crate::klog!("[X11] 发送 _NET_ACTIVE_WINDOW 失败: {e}");
+        forget_shared_conn();
+        return false;
+    }
+    let _ = conn.flush();
+    true
 }
 
 /// 目标窗口当前是否已经是活动窗口
