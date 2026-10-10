@@ -23,11 +23,14 @@ use parking_lot::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, ConnectionExt, EventMask,
-    GrabMode, InputFocus, ModMask, Window, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
+    GrabMode, InputFocus, ModMask, PropMode, Window, KEY_PRESS_EVENT, KEY_RELEASE_EVENT,
 };
 use x11rb::protocol::xtest;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
+// change_property8/16/32 这类便捷方法在 wrapper::ConnectionExt 里,
+// 与上面 xproto::ConnectionExt 同名,用 `as _` 引入避免符号冲突
+use x11rb::wrapper::ConnectionExt as _;
 use x11rb::CURRENT_TIME;
 
 type XResult<T> = Result<T, String>;
@@ -352,7 +355,7 @@ fn server_time(conn: &RustConnection, root: Window) -> Option<u32> {
     .ok()?
     .check()
     .ok()?;
-    conn.change_property32(win, atom, AtomEnum::CARDINAL, [0u32])
+    conn.change_property32(PropMode::REPLACE, win, atom, AtomEnum::CARDINAL, &[0u32])
         .ok()?
         .check()
         .ok()?;
@@ -400,14 +403,15 @@ pub fn send_wm_take_focus(win: Window) -> bool {
     };
 
     // 目标窗口在 WM_PROTOCOLS 里声明过才会处理这条消息(没声明的老窗口跳过);
-    // 协议属性查询不到时不拦,照发(发不进去也就是失败,不比现状差)
-    if let Some(atoms) = conn
+    // 协议属性查询不到时不拦,照发(发不进去也就是失败,不比现状差)。
+    // 注意 value32() 借用 reply,必须在闭包内收敛成 owned 的 Vec 再带出去
+    let declared = conn
         .get_property(false, win, protocols, AtomEnum::ATOM, 0, 64)
         .ok()
         .and_then(|cookie| cookie.reply().ok())
-        .and_then(|reply| reply.value32())
-    {
-        if !atoms.any(|atom| atom == take_focus) {
+        .map(|reply| reply.value32().map(|it| it.collect::<Vec<u32>>()));
+    if let Some(Some(atoms)) = declared {
+        if !atoms.iter().any(|atom| *atom == take_focus) {
             crate::klog!("[X11] 目标窗口 0x{win:x} 未声明 WM_TAKE_FOCUS,跳过补发");
             return true;
         }
@@ -434,7 +438,7 @@ pub fn send_wm_take_focus(win: Window) -> bool {
 /// XTEST 注入的按键送给"输入焦点"窗口,它和 _NET_ACTIVE_WINDOW 不是一回事;
 /// 两者不一致(或焦点悬在根窗口)时注入就会打空。排查"没粘贴进来"类问题主要看这两个值。
 pub fn focus_snapshot() -> String {
-    let Some(shared) = shared_conn() else {
+    let Ok(shared) = shared_conn() else {
         return "X11 连接不可用".into();
     };
     let (conn, _) = (&shared.conn, shared.root);
