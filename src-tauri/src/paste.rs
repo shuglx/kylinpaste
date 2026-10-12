@@ -165,58 +165,77 @@ pub fn paste_record_plain(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), 
     paste_record(app, &plain_rec)
 }
 
-/// 粘贴主链路:写剪贴板 → 隐藏窗口 → 归还焦点 → 注入快捷键
+/// 粘贴主链路。
+///
+/// Linux:写剪贴板 → 真切换激活目标窗口 → 注入 → 隐藏自己。
+/// 激活必须在隐藏之前做:此时自己还是活动窗口,EWMH 激活目标必然是"真切换",
+/// WM 会走完整激活协议(FocusIn + WM_TAKE_FOCUS),Qt/CEF 类应用据此恢复内部
+/// 控件焦点;若先隐藏自己,UKUI 会自动把活动窗口还给目标,后续激活就成空操作
+/// (企业邮箱 cmclient 实测:表现为 Ctrl+V 落空/粘错位置)。而注入之后再隐藏
+/// 自己——那时早已不是活动窗口,取消映射不影响焦点,只做视觉清理。
+///
+/// macOS:写剪贴板 → 隐藏窗口(让出激活态) → 等前台切回 → AX 恢复焦点窗口 →
+/// 注入 → 置顶模式恢复显示。
 fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
     // 1. 先写剪贴板:此时窗口还在,出错能立刻反馈给前端
     write_clipboard(app, rec)?;
     klog!("[粘贴] 剪贴板已写入");
 
-    // 2. (仅 Linux)趁自己还是活动窗口,先真切换激活目标窗口。
-    //    此时 WM 的活动窗口是我们,EWMH 激活目标必然是真实切换,WM 会走完整
-    //    激活协议(给我们 FocusOut,给目标 FocusIn + WM_TAKE_FOCUS),应用据此
-    //    恢复内部控件焦点——等价于 xdotool windowactivate 实验的机制。
-    //    之后再隐藏自己:那时我们已不是活动窗口,取消映射不会触发焦点回收,
-    //    也就不会出现"UKUI 自动还焦点导致后续激活变空操作"的问题。
-    //    置顶(钉住)时也必须隐藏:目标应用要拿到键盘焦点才能接收注入的快捷键。
     #[cfg(target_os = "linux")]
-    let pre_activated = match crate::x11::target_window() {
-        Some(win) => {
-            let ok = crate::x11::activate_window(win);
-            klog!("[粘贴] 隐藏前先真切换激活目标窗口: 0x{win:x},结果={ok}");
-            ok
-        }
-        None => false,
-    };
-    #[cfg(not(target_os = "linux"))]
-    let pre_activated = false;
-
-    // 3. 隐藏窗口,把焦点让出去。
-    //    置顶(钉住)时也必须短暂隐藏:目标应用要拿到键盘焦点才能接收注入的快捷键;
-    //    粘贴完成后再把窗口请回来(见步骤 5),用户看到的是一次短暂闪烁。
-    //    这同时避开了 UKUI 重映射丢置顶的坑(呼出路径会补发 ABOVE)。
-    //    Linux 上此时目标窗口已被前置激活(步骤 2),自己是普通窗口,取消映射
-    //    不会再引发焦点回收。
-    crate::hide_main(app);
-    let hidden = wait_until_hidden(app, Duration::from_millis(800));
-    klog!("[粘贴] 主窗口已隐藏: {hidden}");
-
-    // 4. 确保焦点落回"唤起剪贴板之前的那个窗口"
-    restore_focus(pre_activated);
-    std::thread::sleep(Duration::from_millis(120));
-
-    // macOS 特例:app.hide() 之后偶尔我们仍是"最前"的那个应用(激活态没让出去),
-    // 这时注入的 ⌘V 会打进我们自己的窗口,表现就是"只有第一次能粘贴"。
-    // 检测到这种情况就显式 deactivate 一次,把激活态交给下一个应用。
-    // macOS:app.hide() 后激活态让出是异步的,前台常常暂时还是自己。
-    // 显式 deactivate 后**轮询**等前台真正变回其它应用再注入——之前固定睡 150ms,
-    // 切换慢时 ⌘V 会落进切换的空档里,粘贴无任何反应。
-    #[cfg(target_os = "macos")]
     {
+        // 2. 趁自己还是活动窗口,真切换激活目标窗口。
+        //    WM 走完整激活协议(给我们 FocusOut,给目标 FocusIn + WM_TAKE_FOCUS),
+        //    应用据此恢复内部控件焦点——等价于 xdotool windowactivate 实验的机制。
+        match crate::x11::target_window() {
+            Some(win) => {
+                let ok = crate::x11::activate_window(win);
+                klog!("[粘贴] 真切换激活目标窗口: 0x{win:x},结果={ok}");
+            }
+            None => klog!("[粘贴] 没有记录过目标窗口,依赖 WM 归还焦点"),
+        }
+        // 3. 给 WM/应用一点处理激活的时间(xdotool 对照实验:激活后立即注入即可)
+        std::thread::sleep(Duration::from_millis(120));
+
+        // 4. 注入:自己已不是活动窗口(被目标窗口盖住),按键直达目标应用。
+        //    注意此时自己还【可见】,隐藏挪到注入之后——取消映射若发生在注入前,
+        //    WM 的焦点回收会把应用刚恢复的内部焦点再次打断(cmclient 实测:
+        //    收件人粘贴被"贴到正文旧光标处")
+        klog!(
+            "[粘贴] 注入前: 前台应用={:?} 窗口可见(镜像)={}",
+            crate::appinfo::active_app_name(),
+            crate::window_visible(),
+        );
+        simulate_paste()?;
+        klog!("[粘贴] 粘贴快捷键已发送");
+        klog!("[粘贴] 注入后: {}", crate::x11::focus_snapshot());
+
+        // 5. 注入完成后隐藏自己:此时自己早已不是活动窗口,取消映射不影响焦点,
+        //    只是把面板从目标窗口底下收走(也退出 alt-tab 列表)
+        crate::hide_main(app);
+
+        // 6. 置顶模式:把窗口恢复显示(show_main 顺带补发 ABOVE,修 UKUI 丢置顶)
+        if crate::is_always_on_top() {
+            std::thread::sleep(Duration::from_millis(250));
+            crate::show_main(app);
+            klog!("[粘贴] 置顶模式:窗口已恢复显示");
+        }
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        // 2. 隐藏窗口,把焦点让出去。置顶(钉住)时也必须短暂隐藏:目标应用要拿到
+        //    键盘焦点才能接收注入的快捷键;粘贴完成后再把窗口请回来(见步骤 5)。
+        //    这同时避开了 UKUI 重映射丢置顶的坑(呼出路径会补发 ABOVE)。
+        crate::hide_main(app);
+        let hidden = wait_until_hidden(app, Duration::from_millis(800));
+        klog!("[粘贴] 主窗口已隐藏: {hidden}");
+
+        // 3. 等前台真正切回其它应用,再恢复 AX 记下的焦点窗口。
+        //    app.hide() 后激活态让出是异步的:先等自然让出,400ms 仍未让出才兜底
+        //    显式 deactivate——立刻 deactivate 会取消自动切换,⌘V 落进空档。
         let started = std::time::Instant::now();
         let handle = app.clone();
-        // hide 之后系统会自动把前台交给上一个应用(实测 ~100-200ms 完成);
-        // 立刻 deactivate 会取消这次自动切换,系统陷入"无激活应用"状态,
-        // ⌘V 发进空档(表现:粘贴无任何反应)。先等自然让出,400ms 仍未让出才兜底。
         let mut deactivated = false;
         while crate::appinfo::active_app_name().is_none()
             && started.elapsed() < Duration::from_millis(1200)
@@ -232,37 +251,28 @@ fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
         if deactivated {
             klog!("[粘贴] 激活态已让出(等待 {}ms)", started.elapsed().as_millis());
         }
+        klog!(
+            "[粘贴] 注入前: 前台应用={:?} 窗口可见(镜像)={}",
+            crate::appinfo::active_app_name(),
+            crate::window_visible(),
+        );
+        // 应用重新拿到激活态后,key window 是应用自己挑的——多窗口应用(如邮件
+        // 客户端的写信窗口)常常回到主窗口而不是用户原来在打字的窗口,需要把
+        // 呼出前用 AX 记下的焦点窗口/控件设回去,⌘V 才会落到正确的位置
+        crate::appinfo::restore_focused_window();
+
+        // 4. 注入粘贴快捷键(⌘V)
+        simulate_paste()?;
+        klog!("[粘贴] 粘贴快捷键已发送");
+
+        // 5. 置顶模式:给目标应用留一点处理按键的时间,然后把窗口恢复显示
+        if crate::is_always_on_top() {
+            std::thread::sleep(Duration::from_millis(250));
+            crate::show_main(app);
+            klog!("[粘贴] 置顶模式:窗口已恢复显示");
+        }
+        Ok(())
     }
-
-    // 注入前把"现在前台是谁"打出来:如果这里是我们自己(None)或空,说明焦点没让出去,
-    // 注入的快捷键会打空 —— 排查"只能粘一次"这类问题全靠这一行
-    klog!(
-        "[粘贴] 注入前: 前台应用={:?} 窗口可见(镜像)={}",
-        crate::appinfo::active_app_name(),
-        crate::window_visible(),
-    );
-
-    // macOS:应用重新拿到激活态后,key window 是应用自己挑的——多窗口应用
-    // (如邮件客户端的写信窗口)常常回到主窗口,而不是用户原来在打字的窗口。
-    // 把呼出前用 AX 记下的焦点窗口设回去,⌘V 才会落到正确的窗口。
-    #[cfg(target_os = "macos")]
-    crate::appinfo::restore_focused_window();
-
-    // 5. 注入粘贴快捷键(macOS 是 ⌘V,其余平台 Ctrl+V)
-    simulate_paste()?;
-    klog!("[粘贴] 粘贴快捷键已发送");
-    // 注入后焦点快照:确认按键真的送进了目标窗口(排查"没粘贴进来"类问题的关键证据)
-    #[cfg(target_os = "linux")]
-    klog!("[粘贴] 注入后: {}", crate::x11::focus_snapshot());
-
-    // 6. 置顶模式:给目标应用留一点处理按键的时间,然后把窗口恢复显示。
-    //    show_main 在 Linux 上会顺带补发 ABOVE,修复 UKUI 重映射丢置顶的问题。
-    if crate::is_always_on_top() {
-        std::thread::sleep(Duration::from_millis(250));
-        crate::show_main(app);
-        klog!("[粘贴] 置顶模式:窗口已恢复显示");
-    }
-    Ok(())
 }
 
 /// 等待窗口真正隐藏(窗口请求是投递到主循环异步处理的)。
@@ -304,48 +314,6 @@ fn is_visible_via_main(app: &AppHandle) -> Option<bool> {
     })
     .ok()?;
     rx.recv_timeout(Duration::from_millis(300)).ok().flatten()
-}
-
-/// 归还焦点。
-///
-/// Linux 上常规路径已在隐藏前用"真切换"前置激活了目标窗口(paste_steps 步骤 2),
-/// 这里只做兜底:前置激活没成功时补一次激活——目标还不是活动窗口的话,借桌面
-/// 制造真切换;已是活动窗口(UKUI 自动还焦点)则只补发 WM_TAKE_FOCUS。
-/// 无论哪种,最后都补发一次带真实时间戳的 WM_TAKE_FOCUS(幂等,正常应用无感)。
-fn restore_focus(pre_activated: bool) {
-    #[cfg(target_os = "linux")]
-    {
-        let deadline = std::time::Instant::now() + Duration::from_millis(200);
-        while std::time::Instant::now() < deadline && !crate::x11::focus_left_app() {
-            std::thread::sleep(Duration::from_millis(25));
-        }
-        match crate::x11::target_window() {
-            Some(win) => {
-                if !pre_activated && crate::x11::target_window_is_active() {
-                    // 前置激活没成功,而 UKUI 已自动把焦点还给目标窗口:
-                    // 借桌面制造真切换(即发即走,60ms 后切回)
-                    match crate::x11::desktop_window() {
-                        Some(desktop) => {
-                            let d = crate::x11::activate_window_fast(desktop);
-                            klog!("[粘贴] 前置激活未成功,先激活桌面制造真切换: {d}");
-                            std::thread::sleep(std::time::Duration::from_millis(60));
-                        }
-                        None => {
-                            let unset = crate::x11::unsettle_focus();
-                            klog!("[粘贴] 没有桌面窗口,退回拨焦点到根窗口: {unset}");
-                        }
-                    }
-                }
-                let ok = crate::x11::activate_window(win);
-                klog!("[粘贴] 归还焦点到 0x{win:x},结果={ok}");
-                let tf = crate::x11::send_wm_take_focus(win);
-                klog!("[粘贴] 补发 WM_TAKE_FOCUS: {tf}");
-            }
-            None => klog!("[粘贴] 没有记录过目标窗口,依赖窗口管理器归还焦点"),
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    let _ = pre_activated;
 }
 
 fn simulate_paste() -> Result<(), String> {
