@@ -188,6 +188,11 @@ fn paste_steps(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {
         //    应用据此恢复内部控件焦点——等价于 xdotool windowactivate 实验的机制。
         match crate::x11::target_window() {
             Some(win) => {
+                // 激活前先把指针归位到呼出时的位置(用户光标所在字段):
+                // cmclient 这类应用激活时把焦点路由到"指针下方的控件",
+                // 用户点选面板条目会把指针带进面板,归位才能命中正确字段
+                let warped = crate::x11::restore_pointer_position();
+                klog!("[粘贴] 指针归位到呼出时位置: {warped}");
                 let ok = crate::x11::activate_window(win);
                 klog!("[粘贴] 真切换激活目标窗口: 0x{win:x},结果={ok}");
             }

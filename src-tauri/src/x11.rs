@@ -319,6 +319,53 @@ fn window_label(conn: &RustConnection, win: Window) -> String {
     format!("{class}: {title}")
 }
 
+/// 呼出剪贴板之前鼠标指针所在的屏幕坐标。
+///
+/// cmclient 这类 Qt/CEF 应用在窗口被激活时,把内部焦点路由到"鼠标指针下方的
+/// 控件"而不是用户点击过的输入框(实测:同一写信窗口,指针悬在正文区域就粘进
+/// 正文,悬在收件人高度就粘进收件人)。用户定位光标的字段通常就是指针所在处
+/// (刚点击完),所以记住呼出时的指针位置,激活目标窗口前把指针归位,应用的
+/// 焦点路由就会命中用户当时的输入框。
+static POINTER_POS: Lazy<Mutex<Option<(i16, i16)>>> = Lazy::new(|| Mutex::new(None));
+
+/// 记录当前鼠标指针位置(建议在抢占焦点之前调用,与 remember_target_window 同点)
+pub fn remember_pointer_position() {
+    let Ok(shared) = shared_conn() else {
+        return;
+    };
+    let Ok(reply) = shared
+        .conn
+        .query_pointer(shared.root)
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.reply().map_err(|e| e.to_string()))
+    else {
+        return;
+    };
+    *POINTER_POS.lock() = Some((reply.root_x, reply.root_y));
+}
+
+/// 把鼠标指针归位到呼出时记录的位置。没记录过(或已归位)返回 false。
+pub fn restore_pointer_position() -> bool {
+    let Some((x, y)) = *POINTER_POS.lock() else {
+        return false;
+    };
+    let Ok(shared) = shared_conn() else {
+        return false;
+    };
+    let sent = shared
+        .conn
+        .warp_pointer(None, Some(shared.root), 0, 0, 0, 0, x, y)
+        .map_err(|e| e.to_string())
+        .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
+    let ok = sent.is_ok();
+    if let Err(e) = sent {
+        crate::klog!("[X11] 指针归位失败: {e}");
+        forget_shared_conn();
+    }
+    let _ = shared.conn.flush();
+    ok
+}
+
 /// 粘贴诊断快照:_NET_ACTIVE_WINDOW 与 X 输入焦点各落在哪个窗口。
 ///
 /// XTEST 注入的按键送给"输入焦点"窗口,它和 _NET_ACTIVE_WINDOW 不是一回事;

@@ -64,6 +64,8 @@ fn main() {
     // 用户不按热键、直接点选条目时,这就是最合理的粘贴落点。
     #[cfg(target_os = "linux")]
     x11::remember_target_window();
+    #[cfg(target_os = "linux")]
+    x11::remember_pointer_position();
     #[cfg(target_os = "macos")]
     crate::appinfo::remember_focused_window();
 
@@ -429,6 +431,8 @@ pub fn show_main(app: &tauri::AppHandle) {
     let _ = app.emit_all("window-summoned", ());
     #[cfg(target_os = "linux")]
     x11::remember_target_window();
+    #[cfg(target_os = "linux")]
+    x11::remember_pointer_position();
     // macOS:同 X11 的"记住目标窗口"——应用重新被激活时 key window 由应用自己挑,
     // 多窗口应用(如邮件客户端的写信窗口)常常回到主窗口而不是用户在打字的窗口
     #[cfg(target_os = "macos")]
