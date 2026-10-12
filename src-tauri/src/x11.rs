@@ -28,9 +28,6 @@ use x11rb::protocol::xproto::{
 use x11rb::protocol::xtest;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
-// change_property8/16/32 这类便捷方法在 wrapper::ConnectionExt 里,
-// 与上面 xproto::ConnectionExt 同名,用 `as _` 引入避免符号冲突
-use x11rb::wrapper::ConnectionExt as _;
 use x11rb::CURRENT_TIME;
 
 type XResult<T> = Result<T, String>;
@@ -354,7 +351,7 @@ pub fn restore_pointer_position() -> bool {
     };
     let sent = shared
         .conn
-        .warp_pointer(None, Some(shared.root), 0, 0, 0, 0, x, y)
+        .warp_pointer(x11rb::NONE, shared.root, 0, 0, 0, 0, x, y)
         .map_err(|e| e.to_string())
         .and_then(|cookie| cookie.check().map_err(|e| e.to_string()));
     let ok = sent.is_ok();
