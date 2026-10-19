@@ -32,6 +32,9 @@ pub struct Settings {
     pub language: String,
     /// 便捷粘贴:搜索框为空时按数字键 1-9 直接粘贴对应条目
     pub quick_paste: bool,
+    /// 优先粘贴纯文本:文字/富文本记录的常规粘贴(点击/回车/数字键)只写纯文本;
+    /// 条目上的「粘贴纯文本」按钮相应变为「粘贴富文本」(默认关)
+    pub prefer_plain_text: bool,
     /// 窗口底色不透明度(50-100):界面据此改写 CSS 变量 --bg
     pub opacity: u8,
     /// 主题:light | dark | system(跟随系统深浅色)
@@ -56,6 +59,7 @@ impl Default for Settings {
             max_items: 500,
             language: "zh".to_string(),
             quick_paste: true,
+            prefer_plain_text: false,
             opacity: 90,
             theme: "system".to_string(),
             reset_filter_on_show: false,
@@ -97,11 +101,12 @@ pub fn start(app: &AppHandle) {
     state::set_max_items(current.max_items);
     save();
     println!(
-        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={} 显示时重置筛选={}",
+        "[设置] 载入: 热键={} 保留条数={} 语言={} 便捷粘贴={} 优先纯文本={} 透明度={}% 主题={} 显示时重置筛选={}",
         current.hotkey,
         current.max_items,
         current.language,
         current.quick_paste,
+        current.prefer_plain_text,
         current.opacity,
         current.theme,
         current.reset_filter_on_show
@@ -166,11 +171,12 @@ pub fn cmd_set_settings(app: AppHandle, settings: Settings) -> Result<Settings, 
     }
 
     klog!(
-        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={} 透明度={}% 主题={} 显示时重置筛选={}",
+        "[设置] 已更新: 热键={} 保留条数={} 语言={} 便捷粘贴={} 优先纯文本={} 透明度={}% 主题={} 显示时重置筛选={}",
         next.hotkey,
         next.max_items,
         next.language,
         next.quick_paste,
+        next.prefer_plain_text,
         next.opacity,
         next.theme,
         next.reset_filter_on_show
@@ -198,6 +204,10 @@ mod tests {
         assert_eq!(parsed.theme, "dark");
         assert!(
             !parsed.reset_filter_on_show,
+            "缺字段时应当取默认值(默认关,保持老行为)"
+        );
+        assert!(
+            !parsed.prefer_plain_text,
             "缺字段时应当取默认值(默认关,保持老行为)"
         );
     }

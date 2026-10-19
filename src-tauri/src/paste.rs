@@ -66,30 +66,49 @@ impl Drop for PasteGuard {
     }
 }
 
-/// 特殊操作:纯文本粘贴。**必须 async**:粘贴链路里有最长 2s 的等待
-/// (隐藏窗口/等激活态让出),同步命令会占住主线程,NSApp hide 与排队到
-/// 主线程的操作都得不到处理,前台永远切不出去,⌘V 发进空档(粘贴无反应)。
-#[tauri::command(async)]
-pub fn cmd_paste_plain(app: AppHandle, id: u64) -> Result<(), String> {
+/// 特殊操作:粘贴。`plain=true` 只写纯文本,`plain=false` 写回富文本(html+纯文本)。
+///
+/// 两条通道都**显式指定**格式,不受"优先粘贴纯文本"开关影响——开关只改变常规粘贴
+/// 的默认行为,条目上的按钮始终按其当前语义执行。
+/// **必须 async**:粘贴链路里有最长 2s 的等待(隐藏窗口/等激活态让出),同步命令会
+/// 占住主线程,NSApp hide 与排队到主线程的操作都得不到处理,前台永远切不出去,
+/// ⌘V 发进空档(粘贴无反应)。
+fn paste_explicit(app: &AppHandle, id: u64, plain: bool) -> Result<(), String> {
     let Some(_guard) = PasteGuard::acquire() else {
-        klog!("[粘贴] 已有粘贴在进行,忽略纯文本粘贴请求(id={id})");
+        klog!("[粘贴] 已有粘贴在进行,忽略本次请求(id={id}, plain={plain})");
         return Ok(());
     };
     let result = match state::get_by_id(id) {
         Some(rec) => {
-            let r = paste_record_plain(&app, &rec);
+            let r = if plain {
+                paste_record_plain(app, &rec)
+            } else {
+                paste_record(app, &rec)
+            };
             if let Err(e) = &r {
-                klog!("[粘贴] 纯文本粘贴命令失败: {e}");
+                klog!("[粘贴] 特殊操作粘贴失败(plain={plain}): {e}");
             }
             r
         }
         None => Err("记录不存在".into()),
     };
-    // 纯文本粘贴同样是"用了这条记录",一样置顶(与普通粘贴保持一致)
+    // 特殊操作粘贴同样是"用了这条记录",一样置顶(与普通粘贴保持一致)
     if result.is_ok() {
-        promote_after_paste(&app, id);
+        promote_after_paste(app, id);
     }
     result
+}
+
+/// 特殊操作:粘贴纯文本(不保留格式)
+#[tauri::command(async)]
+pub fn cmd_paste_plain(app: AppHandle, id: u64) -> Result<(), String> {
+    paste_explicit(&app, id, true)
+}
+
+/// 特殊操作:粘贴富文本(保留格式)。"优先粘贴纯文本"开启时,条目按钮由它接管。
+#[tauri::command(async)]
+pub fn cmd_paste_rich(app: AppHandle, id: u64) -> Result<(), String> {
+    paste_explicit(&app, id, false)
 }
 
 #[tauri::command(async)]
@@ -122,12 +141,24 @@ fn promote_after_paste(app: &AppHandle, id: u64) {
 
 fn do_paste_item(app: &AppHandle, id: u64) -> Result<(), String> {
     let rec = state::get_by_id(id).ok_or("记录不存在")?;
-    let result = paste_record(app, &rec);
+    // "优先粘贴纯文本"开启时,文字/富文本记录的常规粘贴(点击/回车/数字键)改写纯文本;
+    // 其余类型(图片/文件)不受影响。条目上的特殊操作按钮走 paste_explicit,不会被这里改写。
+    let result = if prefers_plain(rec.kind.as_str()) {
+        klog!("[粘贴] 已开启优先粘贴纯文本,本条按纯文本粘贴");
+        paste_record_plain(app, &rec)
+    } else {
+        paste_record(app, &rec)
+    };
     // 粘贴失败时窗口已经隐藏,前端的错误横幅是看不到的,必须打到日志上
     if let Err(e) = &result {
         klog!("[粘贴] 命令失败: {e}");
     }
     result
+}
+
+/// 是否按"优先粘贴纯文本"处理:开关开着,且这条记录是文字/富文本类型。
+fn prefers_plain(kind: &str) -> bool {
+    crate::settings::get().prefer_plain_text && matches!(kind, "text" | "html")
 }
 
 pub fn paste_record(app: &AppHandle, rec: &ClipboardRecord) -> Result<(), String> {

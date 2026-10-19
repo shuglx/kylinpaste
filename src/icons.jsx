@@ -85,11 +85,23 @@ export const IconEye = () => (
   </svg>
 );
 
-/* Tabler "letter-t":文字/富文本的特殊操作 —— 粘贴纯文本 */
+/* Tabler "letter-t":文字/富文本的特殊操作(默认)—— 粘贴纯文本 */
 export const IconLetterT = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
     <path d="M6 4l12 0" />
     <path d="M12 4l0 16" />
+  </svg>
+);
+
+/* Tabler "typography":开启"优先粘贴纯文本"后,文字/富文本的特殊操作 —— 粘贴富文本(带格式)。
+   与 ref 项目一致:富文本/html 用它,纯文本用 text-size 那类字形图标。 */
+export const IconTypography = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" {...iconStroke}>
+    <path d="M4 20l3 0" />
+    <path d="M14 20l7 0" />
+    <path d="M6.9 15l6.9 0" />
+    <path d="M10.2 6.3l5.8 13.7" />
+    <path d="M5 20l6 -16l2 0l7 16" />
   </svg>
 );
 

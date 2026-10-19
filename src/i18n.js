@@ -74,6 +74,7 @@ const zh = {
   tabStorage: '存储',
   close: '关闭',
   specialPastePlain: '粘贴纯文本',
+  specialPasteRich: '粘贴富文本',
   specialOpenFolder: '在文件管理器中打开',
   specialOpenLink: '在浏览器中打开',
   specialViewImage: '查看大图',
@@ -105,6 +106,9 @@ const zh = {
   autostartOff: '已关闭开机自启',
   quickPaste: '便捷粘贴',
   quickPasteTip: '开启后，呼出窗口按住 Alt（mac 上是 ⌥ Option）再按数字键 1-9，就能粘贴对应位置的记录',
+  preferPlainText: '优先粘贴纯文本',
+  preferPlainTextTip:
+    '开启后，文字/富文本记录的常规粘贴（点击、回车、Alt+数字）只写纯文本；条目上的「粘贴纯文本」按钮相应变为「粘贴富文本」，用来粘贴带格式的内容。',
   hotkeyToggle: '显示/隐藏快捷键',
   resetFilterOnShow: '显示时重置筛选',
   resetFilterOnShowTip:
@@ -155,8 +159,10 @@ const zh = {
 
   // 条目功能:左列是条目上的按钮图标,这几条同样只作 title
   helpItemSpecial: '特殊操作',
-  helpItemSpecialTip:
-    '文字＝粘贴纯文本，图片＝预览，文件＝打开所在目录，链接＝浏览器中打开',
+  helpItemSpecialTip: (plain) =>
+    plain
+      ? '文字＝粘贴富文本（常规粘贴已改为直接粘纯文本），图片＝预览，文件＝打开所在目录，链接＝浏览器中打开'
+      : '文字＝粘贴纯文本，图片＝预览，文件＝打开所在目录，链接＝浏览器中打开',
   helpItemGroup: '分组',
   helpItemGroupTip: '给记录设置分组',
   helpItemFav: '收藏',
@@ -234,6 +240,7 @@ const en = {
   tabStorage: 'Storage',
   close: 'Close',
   specialPastePlain: 'Paste as plain text',
+  specialPasteRich: 'Paste as rich text',
   specialOpenFolder: 'Reveal in file manager',
   specialOpenLink: 'Open in browser',
   specialViewImage: 'View image',
@@ -265,6 +272,9 @@ const en = {
   autostartOff: 'Launch at login disabled',
   quickPaste: 'Quick paste',
   quickPasteTip: 'When on, hold Alt (⌥ Option on Mac) and press 1-9 while the window is open to paste the record at that position',
+  preferPlainText: 'Prefer plain text',
+  preferPlainTextTip:
+    'When on, normal pastes of text / rich-text records (click, Enter, Alt+number) write plain text only; the record button then becomes "Paste as rich text" for pasting with formatting.',
   hotkeyToggle: 'Show / hide shortcut',
   resetFilterOnShow: 'Reset filters when shown',
   resetFilterOnShowTip:
@@ -311,8 +321,10 @@ const en = {
   helpTopGear: 'Gear',
 
   helpItemSpecial: 'Special action',
-  helpItemSpecialTip:
-    'text = paste as plain text, image = preview, file = open containing folder, link = open in browser',
+  helpItemSpecialTip: (plain) =>
+    plain
+      ? 'text = paste as rich text (normal paste now writes plain text), image = preview, file = open containing folder, link = open in browser'
+      : 'text = paste as plain text, image = preview, file = open containing folder, link = open in browser',
   helpItemGroup: 'Group',
   helpItemGroupTip: 'Assign a group to the record',
   helpItemFav: 'Star',

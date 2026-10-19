@@ -19,6 +19,7 @@ import {
   IconFileSymlink,
   IconHelp,
   IconLetterT,
+  IconTypography,
   IconTag,
   IconTrash,
 } from './icons.jsx';
@@ -42,6 +43,7 @@ const DEFAULT_SETTINGS = {
   max_items: 500,
   language: 'zh',
   quick_paste: true,
+  prefer_plain_text: false,
   opacity: 90,
   theme: 'system',
   reset_filter_on_show: false,
@@ -202,9 +204,10 @@ function prettyAccel(accel) {
  * 使用方法弹窗。
  *
  * 快捷键一律现算,不写死:呼出热键取自设置(改绑后重开即变),
- * 修饰键按平台显示(mac 的 ⌥ ⇧ ⌘ / 麒麟的 Alt Shift Ctrl),便捷粘贴关闭时改说关闭原因。
+ * 修饰键按平台显示(mac 的 ⌥ ⇧ ⌘ / 麒麟的 Alt Shift Ctrl),便捷粘贴关闭时改说关闭原因;
+ * 条目特殊操作的说明也按"优先粘贴纯文本"开关现算(开关开着时文字＝粘贴富文本)。
  */
-function HelpDialog({ t, hotkey, quickPaste, onClose }) {
+function HelpDialog({ t, hotkey, quickPaste, preferPlain, onClose }) {
   const alt = IS_MAC ? '⌥' : 'Alt';
   /** 每个章节一张表:左列是快捷键(键帽)或按钮图标,右列是说明。
    *  `off` = 该功能当前关闭,整行置灰 */
@@ -242,17 +245,18 @@ function HelpDialog({ t, hotkey, quickPaste, onClose }) {
       title: t.helpSecItem,
       rows: [
         {
-          // 特殊操作的图标随记录类型变化,这里把四种都摆出来
+          // 特殊操作的图标随记录类型变化,这里把四种都摆出来;
+          // 文字那一枚再随"优先粘贴纯文本"开关翻转(T=粘纯文本 / typography=粘富文本)
           icon: (
             <>
-              <IconLetterT />
+              {preferPlain ? <IconTypography /> : <IconLetterT />}
               <IconEye />
               <IconFileSymlink />
               <IconLink />
             </>
           ),
           name: t.helpItemSpecial,
-          text: t.helpItemSpecialTip,
+          text: t.helpItemSpecialTip(preferPlain),
         },
         { icon: <IconTag />, name: t.helpItemGroup, text: t.helpItemGroupTip },
         { icon: <IconStar />, name: t.helpItemFav, text: t.helpItemFavTip },
@@ -335,6 +339,8 @@ export default function App() {
   const inputRef = useRef(null);
   const t = useMemo(() => translations((settings || DEFAULT_SETTINGS).language), [settings]);
   const quickPaste = (settings || DEFAULT_SETTINGS).quick_paste;
+  // "优先粘贴纯文本":文字/富文本的常规粘贴直接粘纯文本,条目按钮反向变成"粘贴富文本"
+  const preferPlain = Boolean((settings || DEFAULT_SETTINGS).prefer_plain_text);
 
   // 外观:透明度写进 --bg-alpha(CSS 按 theme 合成 --bg,暗色下换成深色底)
   useEffect(() => {
@@ -537,13 +543,14 @@ export default function App() {
   };
 
   /** 特殊操作:按展示类型(kindTone,链接判定在这里)分发图标/提示/动作。
-   *  链接在 Rust 侧没有独立 kind,必须用 kindTone 而不是 rec.kind */
+   *  链接在 Rust 侧没有独立 kind,必须用 kindTone 而不是 rec.kind。
+   *  文字/富文本的按钮含义随"优先粘贴纯文本"开关翻转(见 preferPlain)。 */
   const specialTitle = (rec) => {
     const kind = kindTone(rec);
     if (kind === 'image') return t.specialViewImage;
     if (kind === 'files') return t.specialOpenFolder;
     if (kind === 'link') return t.specialOpenLink;
-    return t.specialPastePlain;
+    return preferPlain ? t.specialPasteRich : t.specialPastePlain;
   };
 
   const specialIcon = (rec) => {
@@ -551,7 +558,8 @@ export default function App() {
     if (kind === 'image') return <IconEye />;
     if (kind === 'files') return <IconFileSymlink />;
     if (kind === 'link') return <IconLink />;
-    return <IconLetterT />;
+    // 文字/富文本:默认粘纯文本(T 图标);开关开启后语义反转为粘富文本,换成 typography 图标
+    return preferPlain ? <IconTypography /> : <IconLetterT />;
   };
 
   const runSpecial = (rec) => {
@@ -570,8 +578,11 @@ export default function App() {
       openUrl(rec.text || '').catch((e) => flash(String(e)));
       return;
     }
-    // 文字/富文本:只写纯文本再粘贴
-    invoke('cmd_paste_plain', { id: rec.id }).catch((e) => flash(String(e)));
+    // 文字/富文本:默认只写纯文本;"优先粘贴纯文本"开启时反过来,写带格式的富文本。
+    // 两条通道都显式指定格式,绕开开关对常规粘贴的影响(见 paste.rs 的 paste_explicit)。
+    invoke(preferPlain ? 'cmd_paste_rich' : 'cmd_paste_plain', { id: rec.id }).catch((e) =>
+      flash(String(e))
+    );
   };
 
   const flash = (msg) => {
@@ -1216,6 +1227,7 @@ export default function App() {
           t={t}
           hotkey={(settings || DEFAULT_SETTINGS).hotkey}
           quickPaste={quickPaste}
+          preferPlain={preferPlain}
           onClose={() => setHelp(false)}
         />
       )}

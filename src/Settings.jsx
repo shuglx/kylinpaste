@@ -413,6 +413,13 @@ export default function Settings({
                     label={t.quickPaste}
                   />
                 </Row>
+                <Row label={t.preferPlainText} hint={t.preferPlainTextTip}>
+                  <Switch
+                    checked={settings.prefer_plain_text}
+                    onChange={(v) => commit({ prefer_plain_text: v })}
+                    label={t.preferPlainText}
+                  />
+                </Row>
               </div>
 
               <div className="group-title">{t.sectionHotkey}</div>

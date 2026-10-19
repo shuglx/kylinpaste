@@ -166,6 +166,7 @@ show_main(&handle);
             state::cmd_get_asset_dirs,
             paste::cmd_paste_item,
             paste::cmd_paste_plain,
+            paste::cmd_paste_rich,
             settings::cmd_get_settings,
             settings::cmd_set_settings,
             system::cmd_get_autostart,
