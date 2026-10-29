@@ -159,6 +159,7 @@ show_main(&handle);
         })
         .invoke_handler(tauri::generate_handler![
             state::cmd_get_history,
+            state::cmd_get_total_copies,
             state::cmd_set_group,
             state::cmd_set_favorite,
             state::cmd_import_favorites,

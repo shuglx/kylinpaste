@@ -452,10 +452,9 @@ export default function App() {
   }, [pinned]);
 
   /** 保存设置:先乐观更新界面,后端返回的才是最终值(热键注册失败会退回去并抛错) */
-  // "存储"页的条目统计:临时=未收藏也未分组;三类可能重叠(一条记录可既分组又收藏)
+  // "存储"页的条目统计:只统计当前仍在列表里的分组/收藏(一条记录可既分组又收藏)
   const storageCounts = useMemo(
     () => ({
-      transient: items.filter((r) => !r.favorite && !r.group).length,
       grouped: items.filter((r) => !!r.group).length,
       favorite: items.filter((r) => !!r.favorite).length,
     }),

@@ -1092,7 +1092,6 @@ button:focus,
   color: var(--muted-2);
   font-size: 11.5px;
   line-height: 1.6;
-  /* 说明里的 \n 要真的换行(如"最大条目数"那条分两句) */
   white-space: pre-line;
 }
 .row-ctrl {

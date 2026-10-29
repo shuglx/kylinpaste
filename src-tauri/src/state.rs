@@ -54,6 +54,10 @@ struct PersistFile {
     version: u32,
     /// serde 对 `Arc` 是透明的(序列化结果与裸记录逐字节一致),需要 "rc" feature
     items: Vec<SharedRecord>,
+    /// 累计复制次数(含重复内容,清空历史也不归零)。
+    /// 老文件里没有这个字段,`serde(default)` 让它们按 0 载入。
+    #[serde(default)]
+    total_copies: u64,
 }
 
 /// 发给前端的记录视图。
@@ -133,6 +137,20 @@ static DATA_DIR: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new(None));
 /// 收藏与分组的记录不计入这个数,也不会被淘汰,所以总量可能超过它。
 const MAX_HISTORY_DEFAULT: usize = 500;
 static MAX_ITEMS: AtomicUsize = AtomicUsize::new(MAX_HISTORY_DEFAULT);
+
+/// 累计复制次数:每捕获一次剪贴板变化 +1(同一内容重复复制也算)。
+/// 与 `MAX_ITEMS` 不同——它统计的是"历史上复制过多少次",不随裁剪减少,清空历史也不归零。
+static TOTAL_COPIES: AtomicU64 = AtomicU64::new(0);
+
+/// 当前累计复制次数(设置页"数据统计"用)
+pub fn total_copies() -> u64 {
+    TOTAL_COPIES.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub fn cmd_get_total_copies() -> u64 {
+    total_copies()
+}
 
 /// 当前保留条数上限
 pub fn max_items() -> usize {
@@ -279,6 +297,8 @@ fn load() {
     };
     match serde_json::from_slice::<PersistFile>(&raw) {
         Ok(file) => {
+            // 累计次数先恢复:它在裁剪前就该是"历史总量",与保留条数无关
+            TOTAL_COPIES.store(file.total_copies, Ordering::SeqCst);
             let mut hist = HISTORY.lock();
             hist.clear();
             let mut repaired = 0usize;
@@ -337,6 +357,7 @@ fn save() -> Result<(), String> {
     let json = serde_json::to_vec(&PersistFile {
         version: PERSIST_VERSION,
         items,
+        total_copies: total_copies(),
     })
     .map_err(|e| e.to_string())?;
 
@@ -434,6 +455,8 @@ fn trim(hist: &mut VecDeque<SharedRecord>, limit: usize) {
 
 /// 新增(或去重置顶)一条记录并通知前端
 pub fn push_and_emit(app: &AppHandle, rec: ClipboardRecord) {
+    // 先记数再置脏:落盘线程看到的"版本"一定包含这次计数
+    TOTAL_COPIES.fetch_add(1, Ordering::SeqCst);
     let rec = insert_record(&mut HISTORY.lock(), rec);
     mark_dirty();
     let _ = app.emit_all("clipboard-updated", RecordView::from(&rec));
@@ -1028,6 +1051,15 @@ mod tests {
 
         // 前端视图这条链路也要能正常从 Arc 里读出内容
         assert!(get_all_views().iter().any(|v| v.id == rec.id));
+    }
+
+    /// 老版本 history.json 没有 `total_copies`:必须按 0 载入,不能因此整份解析失败
+    #[test]
+    fn old_history_file_without_total_copies_still_parses() {
+        let old = br#"{"version":1,"items":[]}"#;
+        let parsed: PersistFile = serde_json::from_slice(old).expect("老文件应当能解析");
+        assert!(parsed.items.is_empty());
+        assert_eq!(parsed.total_copies, 0, "缺字段时累计次数按 0 起算");
     }
 
     /// 退出前的收尾落盘:500ms 去抖窗口内的改动不能丢。

@@ -280,6 +280,15 @@ export default function Settings({
     commitTimer.current = setTimeout(() => commit({ opacity: value }), 350);
   };
   const [storageFiles, setStorageFiles] = useState([]);
+  // 累计复制次数来自后端(历史总量,与前端列表的裁剪/去重无关)
+  const [totalCopies, setTotalCopies] = useState(null);
+
+  useEffect(() => {
+    if (tab !== 'storage') return;
+    invoke('cmd_get_total_copies')
+      .then(setTotalCopies)
+      .catch((e) => console.warn('读取累计复制次数失败：', e));
+  }, [tab]);
 
   useEffect(() => {
     invoke('cmd_get_app_info').then(setAppInfo).catch(() => {});
@@ -512,8 +521,10 @@ export default function Settings({
 
               <div className="group-title">{t.sectionStorageUsage}</div>
               <div className="card">
-                <Row label={t.storageTransient}>
-                  <span className="storage-num">{t.storageCount(counts?.transient ?? 0)}</span>
+                <Row label={t.storageTotalCopies}>
+                  <span className="storage-num">
+                    {totalCopies === null ? '—' : t.storageCount(totalCopies)}
+                  </span>
                 </Row>
                 <Row label={t.storageGrouped}>
                   <span className="storage-num">{t.storageCount(counts?.grouped ?? 0)}</span>
@@ -542,7 +553,7 @@ export default function Settings({
                 </Row>
               </div>
 
-              {/* 隐私说明常驻展示(原来挤在"最大条目数"的 tooltip 里) */}
+              {/* 隐私说明常驻展示 */}
               <div className="storage-note">{t.storagePrivacy}</div>
             </>
           ) : (
