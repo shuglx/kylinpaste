@@ -61,5 +61,15 @@ Description: KylinPaste clipboard history manager for Kylin V10 (arm64)
  剪贴板历史管理工具:全类型记录、搜索、快捷粘贴、收藏分组。
 EOF
 
-dpkg-deb --build --root-owner-group "$STAGE" "$OUT"
+# 压缩格式固定为 xz:麒麟 V10(基于 Ubuntu 20.04,dpkg 1.19)不认识 zstd。
+# ubuntu-24.04 runner 的 dpkg 1.22 默认用 zstd 打包,产物会带 control.tar.zst,
+# 目标机 dpkg -i 和内部签名平台在解包阶段就会报"未知的压缩"。
+dpkg-deb --build --root-owner-group -Zxz "$STAGE" "$OUT"
+
+# 兜底:产物里一旦出现 *.zst 成员,打包阶段直接失败,别把坏包发出去
+if ar t "$OUT" | grep -q '\.zst$'; then
+  echo "错误: $OUT 使用了 zstd 压缩,麒麟 V10 的 dpkg 无法解析" >&2
+  exit 1
+fi
+
 echo "打包完成: $OUT"
